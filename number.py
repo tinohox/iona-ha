@@ -1,8 +1,13 @@
 """Number-Entity für konfigurierbare Werte (Stunden-Block für Vision)."""
 
+import logging
+
 from homeassistant.components.number import NumberEntity, NumberMode
 
+from .const import DOMAIN
 from .env_utils import get_stunden_block, set_stunden_block, is_vision_enabled
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -64,10 +69,19 @@ class IonaStundenBlockNumber(NumberEntity):
         }
 
     async def async_set_native_value(self, value: float) -> None:
-        """Setze den neuen Wert."""
+        """Setze den neuen Wert und löse sofort Vision-Neuberechnung aus."""
         int_value = int(value)
         await self._hass.async_add_executor_job(set_stunden_block, int_value)
         self._attr_native_value = int_value
+
+        # Vision sofort neu berechnen statt auf nächsten 5-Min-Zyklus zu warten
+        manager = self._hass.data.get(DOMAIN, {}).get("manager")
+        if manager is not None:
+            try:
+                await manager._task_vision()
+                _LOGGER.debug("Vision-Neuberechnung nach Regler-Änderung auf %dh", int_value)
+            except Exception:
+                _LOGGER.warning("Vision-Neuberechnung nach Regler-Änderung fehlgeschlagen")
 
     async def async_update(self) -> None:
         """Aktualisiere den Wert aus der Datei."""
