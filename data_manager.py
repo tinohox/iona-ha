@@ -63,7 +63,10 @@ class IonaDataManager:
         )
 
         # Initiale Daten holen (sequentiell mit Abhängigkeiten)
-        await self._run_initial_fetch()
+        try:
+            await self._run_initial_fetch()
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Fehler bei der initialen Datenabfrage – Integration startet trotzdem")
 
         # Periodische Tasks registrieren
         self._schedule(self._task_web_token, INTERVAL_WEB_TOKEN)

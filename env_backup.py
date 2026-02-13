@@ -134,7 +134,11 @@ def backup_env_files(hass) -> bool:
                 if filename == ".gitkeep":
                     continue
                 src = os.path.join(env_dir, filename)
-                if os.path.isfile(src) and filename.endswith(".env"):
+                if (
+                    os.path.isfile(src)
+                    and filename.endswith(".env")
+                    and os.path.getsize(src) > 0
+                ):
                     shutil.copy2(src, os.path.join(env_backup_dir, filename))
                     total += 1
         except OSError as err:
@@ -150,7 +154,11 @@ def backup_env_files(hass) -> bool:
 
             for filename in os.listdir(data_dir):
                 src = os.path.join(data_dir, filename)
-                if os.path.isfile(src) and filename.endswith(".json"):
+                if (
+                    os.path.isfile(src)
+                    and filename.endswith(".json")
+                    and os.path.getsize(src) > 0
+                ):
                     shutil.copy2(src, os.path.join(data_backup_dir, filename))
                     total += 1
         except OSError as err:

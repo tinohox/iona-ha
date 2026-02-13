@@ -39,10 +39,15 @@ class IonaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             # Zugangsdaten in .env Dateien schreiben
+            # account.env: bestehende Werte beibehalten, vision_tariff aktualisieren
+            account_data = await self.hass.async_add_executor_job(
+                read_env_file, ACCOUNT_ENV
+            )
+            account_data[CONF_VISION_TARIFF] = str(
+                user_input.get(CONF_VISION_TARIFF, False)
+            )
             await self.hass.async_add_executor_job(
-                write_env_file,
-                ACCOUNT_ENV,
-                {CONF_VISION_TARIFF: str(user_input.get(CONF_VISION_TARIFF, False))},
+                write_env_file, ACCOUNT_ENV, account_data
             )
             await self.hass.async_add_executor_job(
                 write_env_file,
@@ -103,10 +108,15 @@ class IonaOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_init(self, user_input=None):
         """Options-Formular anzeigen."""
         if user_input is not None:
+            # account.env: bestehende Werte beibehalten, vision_tariff aktualisieren
+            account_data = await self.hass.async_add_executor_job(
+                read_env_file, ACCOUNT_ENV
+            )
+            account_data[CONF_VISION_TARIFF] = str(
+                user_input.get(CONF_VISION_TARIFF, False)
+            )
             await self.hass.async_add_executor_job(
-                write_env_file,
-                ACCOUNT_ENV,
-                {CONF_VISION_TARIFF: str(user_input.get(CONF_VISION_TARIFF, False))},
+                write_env_file, ACCOUNT_ENV, account_data
             )
             await self.hass.async_add_executor_job(
                 write_env_file,
@@ -116,6 +126,10 @@ class IonaOptionsFlowHandler(config_entries.OptionsFlow):
                     CONF_PASSWORD: user_input[CONF_PASSWORD],
                     CONF_USERNAME: user_input[CONF_USERNAME],
                 },
+            )
+            # Credentials auch im ConfigEntry aktualisieren
+            self.hass.config_entries.async_update_entry(
+                self.config_entry, data=user_input
             )
             return self.async_create_entry(title="", data={})
 
