@@ -97,11 +97,21 @@ def _ist_nachtzeit(dt: datetime) -> bool:
 
 
 def _finde_guenstigste_startzeit(
-    preise: list[dict], stunden: int, nur_nacht: bool = False
+    preise: list[dict],
+    stunden: int,
+    nur_nacht: bool = False,
+    max_vorausschau_h: int = 12,
 ) -> tuple[dict | None, float | None]:
-    """Findet die günstigste zusammenhängende Startzeit."""
+    """Findet die günstigste zusammenhängende Startzeit.
+
+    Der *Start* des Blocks muss innerhalb von max_vorausschau_h Stunden
+    liegen.  Der Block selbst darf darüber hinausgehen.
+    Bei nur_nacht=True werden nur Nacht-Zeitfenster (22–06 Uhr) betrachtet,
+    die 12-h-Grenze gilt trotzdem für den Startpunkt.
+    """
     anzahl = stunden * EINTRAEGE_PRO_STUNDE
     now = datetime.now().astimezone()
+    grenze = now + timedelta(hours=max_vorausschau_h)
 
     future = [e for e in preise if e["timestamp"] >= now]
     if nur_nacht:
@@ -115,6 +125,10 @@ def _finde_guenstigste_startzeit(
 
     for i in range(len(future) - anzahl + 1):
         window = future[i : i + anzahl]
+
+        # Startpunkt muss innerhalb der Vorausschau liegen
+        if window[0]["timestamp"] >= grenze:
+            continue
 
         # Prüfe Aufeinanderfolge (max 20 Min Abstand)
         consecutive = all(
