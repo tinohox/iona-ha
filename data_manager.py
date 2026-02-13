@@ -155,24 +155,30 @@ class IonaDataManager:
 
     async def _task_web_token(self) -> None:
         """Web-Token erneuern."""
+        _LOGGER.info("Starte: get_web_token")
         from .app.get_web_token import run as _run
-        await self.hass.async_add_executor_job(_run)
+        ok = await self.hass.async_add_executor_job(_run)
+        _LOGGER.info("Fertig: get_web_token → %s", "OK" if ok else "FEHLER")
 
     async def _task_lan_token(self) -> None:
         """LAN-Token erneuern – nur wenn Web-Token vorhanden."""
         if not env_file_exists(WEB_TOKEN_ENV):
             _LOGGER.debug("Überspringe LAN-Token: Kein Web-Token vorhanden")
             return
+        _LOGGER.info("Starte: get_lan_token")
         from .app.get_lan_token import run as _run
-        await self.hass.async_add_executor_job(_run)
+        ok = await self.hass.async_add_executor_job(_run)
+        _LOGGER.info("Fertig: get_lan_token → %s", "OK" if ok else "FEHLER")
 
     async def _task_lan_data(self) -> None:
         """Lokale Zählerdaten von der iONA Box abrufen."""
         if not env_file_exists(LAN_TOKEN_ENV):
             _LOGGER.debug("Überspringe LAN-Daten: Kein LAN-Token vorhanden")
             return
+        _LOGGER.info("Starte: get_lan_data")
         from .app.get_lan_data import run as _run
-        await self.hass.async_add_executor_job(_run)
+        ok = await self.hass.async_add_executor_job(_run)
+        _LOGGER.info("Fertig: get_lan_data → %s", "OK" if ok else "FEHLER")
 
     async def _task_web_data(self) -> None:
         """Web-Daten nur als Fallback wenn LAN-Daten veraltet."""
@@ -180,8 +186,10 @@ class IonaDataManager:
             return
         if self._is_data_fresh("meter_db.json", FRESHNESS_METER):
             return
+        _LOGGER.info("Starte: get_web_data (LAN-Daten veraltet, Fallback)")
         from .app.get_web_data import run as _run
-        await self.hass.async_add_executor_job(_run)
+        ok = await self.hass.async_add_executor_job(_run)
+        _LOGGER.info("Fertig: get_web_data → %s", "OK" if ok else "FEHLER")
 
     async def _task_spot_prices(self) -> None:
         """Spotpreise von enviaM abrufen – nur wenn veraltet oder fehlend."""
@@ -189,8 +197,10 @@ class IonaDataManager:
             return
         if self._is_data_fresh("spotpreise_db.json", FRESHNESS_SPOT_PRICES):
             return
+        _LOGGER.info("Starte: get_spot_prices")
         from .app.get_spot_prices import run as _run
-        await self.hass.async_add_executor_job(_run)
+        ok = await self.hass.async_add_executor_job(_run)
+        _LOGGER.info("Fertig: get_spot_prices → %s", "OK" if ok else "FEHLER")
 
     async def _task_tariff_data(self) -> None:
         """Tarifdaten von enviaM abrufen – nur wenn veraltet oder fehlend."""
@@ -198,17 +208,22 @@ class IonaDataManager:
             return
         if self._is_data_fresh("tariff_db.json", FRESHNESS_TARIFF):
             return
+        _LOGGER.info("Starte: get_tariff_data")
         from .app.get_tariff_data import run as _run
-        await self.hass.async_add_executor_job(_run)
+        ok = await self.hass.async_add_executor_job(_run)
+        _LOGGER.info("Fertig: get_tariff_data → %s", "OK" if ok else "FEHLER")
 
     async def _task_calc_preise(self) -> None:
         """Bruttopreise berechnen – nur wenn Quelldaten vorhanden."""
         spot_exists = os.path.isfile(os.path.join(_DATA_DIR, "spotpreise_db.json"))
         tariff_exists = os.path.isfile(os.path.join(_DATA_DIR, "tariff_db.json"))
         if not (spot_exists and tariff_exists):
+            _LOGGER.debug("Überspringe calc_preise: Quelldaten fehlen")
             return
+        _LOGGER.info("Starte: calc_preise")
         from .app.calc_preise import run as _run
-        await self.hass.async_add_executor_job(_run)
+        ok = await self.hass.async_add_executor_job(_run)
+        _LOGGER.info("Fertig: calc_preise → %s", "OK" if ok else "FEHLER")
 
     async def _task_vision(self) -> None:
         """Vision-Berechnung – nur bei aktiviertem Tarif und vorhandenen Daten."""
@@ -218,6 +233,9 @@ class IonaDataManager:
             os.path.join(_DATA_DIR, "spotpreise_brutto_db.json")
         )
         if not brutto_exists:
+            _LOGGER.debug("Überspringe Vision: spotpreise_brutto_db.json fehlt")
             return
+        _LOGGER.info("Starte: vision")
         from .app.vision import run as _run
-        await self.hass.async_add_executor_job(_run)
+        ok = await self.hass.async_add_executor_job(_run)
+        _LOGGER.info("Fertig: vision → %s", "OK" if ok else "FEHLER")
