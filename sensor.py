@@ -129,6 +129,7 @@ class IonaSensor(CoordinatorEntity, Entity):
     """Sensor-Entity für Stromzähler- und Vision-Daten."""
 
     ENERGY_KEYS = {"Gesamtverbrauch", "Gesamteinspeisung"}
+    POWER_KEYS = {"Momentanleistung"}
     VISION_KEYS = {
         "aktueller_preis",
         "guenstigste_startzeit",
@@ -181,7 +182,7 @@ class IonaSensor(CoordinatorEntity, Entity):
         device = self.coordinator.data.get(self._device_id, {})
         value = device.get(self._sensor_key)
 
-        if self._sensor_key in self.ENERGY_KEYS:
+        if self._sensor_key in self.ENERGY_KEYS | self.POWER_KEYS:
             try:
                 return float(value) if value is not None else None
             except (TypeError, ValueError):
@@ -209,6 +210,10 @@ class IonaSensor(CoordinatorEntity, Entity):
             attrs["device_class"] = "energy"
             attrs["state_class"] = "total_increasing"
             attrs.setdefault("unit_of_measurement", "kWh")
+        elif self._sensor_key in self.POWER_KEYS:
+            attrs["device_class"] = "power"
+            attrs["state_class"] = "measurement"
+            attrs.setdefault("unit_of_measurement", "W")
         elif self._is_vision_data() and self._sensor_key in (
             "aktueller_preis",
             "guenstigste_summe",
@@ -222,6 +227,8 @@ class IonaSensor(CoordinatorEntity, Entity):
 
     @property
     def unit_of_measurement(self):
+        if self._sensor_key in self.POWER_KEYS:
+            return "W"
         if self._is_vision_data() and self._sensor_key in (
             "aktueller_preis",
             "guenstigste_summe",
@@ -251,6 +258,8 @@ class IonaSensor(CoordinatorEntity, Entity):
     def device_class(self):
         if self._sensor_key in self.ENERGY_KEYS:
             return "energy"
+        if self._sensor_key in self.POWER_KEYS:
+            return "power"
         if self._is_vision_data() and self._sensor_key in (
             "aktueller_preis",
             "guenstigste_summe",
@@ -263,6 +272,8 @@ class IonaSensor(CoordinatorEntity, Entity):
     def state_class(self):
         if self._sensor_key in self.ENERGY_KEYS:
             return "total_increasing"
+        if self._sensor_key in self.POWER_KEYS:
+            return "measurement"
         if self._is_vision_data() and self._sensor_key in (
             "aktueller_preis",
             "guenstigste_summe",
