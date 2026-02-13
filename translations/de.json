@@ -1,0 +1,49 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "iona-ha Konfiguration",
+        "description": "Gib deine iONA-Zugangsdaten ein, um die Integration einzurichten.",
+        "data": {
+          "IONA_BOX": "iONA Box IP-Adresse",
+          "USERNAME": "Benutzername (E-Mail)",
+          "PASSWORD": "Passwort",
+          "vision_tariff": "mein Strom Vision aktivieren",
+          "vision_tools": "Vision Tools aktivieren"
+        },
+        "data_description": {
+          "IONA_BOX": "Die lokale IP-Adresse deiner iONA Box (z.B. 192.168.1.100)",
+          "USERNAME": "Deine E-Mail-Adresse für die iONA App",
+          "PASSWORD": "Dein Passwort für die iONA App",
+          "vision_tariff": "Aktiviere diese Option, wenn du den dynamischen Tarif 'mein Strom Vision' von enviaM nutzt",
+          "vision_tools": "Optimierungswerkzeuge: günstigste Startzeit, Durchschnittspreis und konfigurierbare Schieberegler"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "iona-ha ist bereits konfiguriert."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "iona-ha Optionen",
+        "description": "Passe deine iONA-Zugangsdaten und Einstellungen an.",
+        "data": {
+          "IONA_BOX": "iONA Box IP-Adresse",
+          "USERNAME": "Benutzername (E-Mail)",
+          "PASSWORD": "Passwort",
+          "vision_tariff": "mein Strom Vision aktivieren",
+          "vision_tools": "Vision Tools aktivieren"
+        },
+        "data_description": {
+          "IONA_BOX": "Die lokale IP-Adresse deiner iONA Box (z.B. 192.168.1.100)",
+          "USERNAME": "Deine E-Mail-Adresse für die iONA App",
+          "PASSWORD": "Dein Passwort für die iONA App",
+          "vision_tariff": "Dynamischen Tarif aktivieren",
+          "vision_tools": "Optimierungswerkzeuge aktivieren"
+        }
+      }
+    }
+  }
+}
