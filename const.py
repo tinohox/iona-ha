@@ -1,7 +1,7 @@
 """Konstanten für die iona-ha Integration."""
 
 DOMAIN = "iona"
-PLATFORMS = ["sensor", "number"]
+PLATFORMS = ["sensor", "number", "switch"]
 
 # Konfigurationsschlüssel
 CONF_IONA_BOX = "IONA_BOX"

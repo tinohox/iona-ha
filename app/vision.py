@@ -29,9 +29,9 @@ ACCOUNT_ENV = os.path.join(ENV_DIR, "account.env")
 INTERVALL_MIN = 15
 EINTRAEGE_PRO_STUNDE = 60 // INTERVALL_MIN
 
-# Nachtzeit
-NACHT_START = 22
-NACHT_ENDE = 6
+# Nachtzeit (Durchschnitt Deutschland: Sonnenuntergang ~20:00, Sonnenaufgang ~07:00)
+NACHT_START = 20
+NACHT_ENDE = 7
 
 
 def _read_stunden_block() -> int:
@@ -58,6 +58,19 @@ def _read_vorausschau_stunden() -> int:
     except (FileNotFoundError, ValueError, OSError):
         pass
     return 12
+
+
+def _read_nur_nacht() -> bool:
+    """Liest den Nacht-Modus aus account.env."""
+    try:
+        with open(ACCOUNT_ENV, "r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("nur_nacht="):
+                    val = line.strip().split("=", 1)[1].strip('"')
+                    return val.lower() == "true"
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+    return False
 
 
 def _lade_spotpreise() -> list[dict]:
@@ -165,6 +178,7 @@ def run() -> bool:
     """Vision-Berechnung durchführen und in DB speichern."""
     stunden = _read_stunden_block()
     vorausschau = _read_vorausschau_stunden()
+    nur_nacht = _read_nur_nacht()
 
     preise = _lade_spotpreise()
     if not preise:
@@ -173,13 +187,11 @@ def run() -> bool:
 
     aktueller_preis = _finde_aktuellen_preis(preise)
 
-    start, avg = _finde_guenstigste_startzeit(preise, stunden, nur_nacht=False, max_vorausschau_h=vorausschau)
+    start, avg = _finde_guenstigste_startzeit(
+        preise, stunden, nur_nacht=nur_nacht, max_vorausschau_h=vorausschau
+    )
     guenstigste_zeit = start["timestamp_str"] if start else None
     guenstigste_summe = round(avg, 5) if avg and avg != float("inf") else None
-
-    start_n, avg_n = _finde_guenstigste_startzeit(preise, stunden, nur_nacht=True, max_vorausschau_h=vorausschau)
-    guenstigste_zeit_nacht = start_n["timestamp_str"] if start_n else None
-    guenstigste_summe_nacht = round(avg_n, 5) if avg_n and avg_n != float("inf") else None
 
     result = {
         "device_id": "vision_strom",
@@ -187,8 +199,6 @@ def run() -> bool:
         "aktueller_preis": aktueller_preis,
         "guenstigste_startzeit": guenstigste_zeit,
         "guenstigste_summe": guenstigste_summe,
-        "guenstigste_startzeit_nacht": guenstigste_zeit_nacht,
-        "guenstigste_summe_nacht": guenstigste_summe_nacht,
         "stunden_block": stunden,
     }
 

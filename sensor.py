@@ -136,8 +136,6 @@ class IonaSensor(CoordinatorEntity, Entity):
     VISION_TOOLS_KEYS = {
         "guenstigste_startzeit",
         "guenstigste_summe",
-        "guenstigste_startzeit_nacht",
-        "guenstigste_summe_nacht",
     }
     VISION_KEYS = VISION_PRICE_KEYS | VISION_TOOLS_KEYS
 
@@ -161,8 +159,6 @@ class IonaSensor(CoordinatorEntity, Entity):
                 "aktueller_preis": "aktueller Strompreis",
                 "guenstigste_startzeit": f"günstigste Startzeit für {stunden}h",
                 "guenstigste_summe": f"Durchschnittskosten für die {stunden}h",
-                "guenstigste_startzeit_nacht": f"günstigste Startzeit für {stunden}h Nachts",
-                "guenstigste_summe_nacht": f"Durchschnittskosten für die {stunden}h Nachts",
             }
             if self._sensor_key in self.VISION_TOOLS_KEYS:
                 return f"Vision Tools – {name_map.get(self._sensor_key, self._sensor_key)}"
@@ -195,7 +191,6 @@ class IonaSensor(CoordinatorEntity, Entity):
 
         if self._is_vision_data() and self._sensor_key in (
             "guenstigste_startzeit",
-            "guenstigste_startzeit_nacht",
         ):
             if value:
                 try:
@@ -222,7 +217,6 @@ class IonaSensor(CoordinatorEntity, Entity):
         elif self._is_vision_data() and self._sensor_key in (
             "aktueller_preis",
             "guenstigste_summe",
-            "guenstigste_summe_nacht",
         ):
             attrs["device_class"] = "monetary"
             attrs["state_class"] = "measurement"
@@ -237,7 +231,6 @@ class IonaSensor(CoordinatorEntity, Entity):
         if self._is_vision_data() and self._sensor_key in (
             "aktueller_preis",
             "guenstigste_summe",
-            "guenstigste_summe_nacht",
         ):
             return "€/kWh"
         device = self.coordinator.data.get(self._device_id, {})
@@ -275,7 +268,6 @@ class IonaSensor(CoordinatorEntity, Entity):
         if self._is_vision_data() and self._sensor_key in (
             "aktueller_preis",
             "guenstigste_summe",
-            "guenstigste_summe_nacht",
         ):
             return "monetary"
         return None
@@ -289,7 +281,6 @@ class IonaSensor(CoordinatorEntity, Entity):
         if self._is_vision_data() and self._sensor_key in (
             "aktueller_preis",
             "guenstigste_summe",
-            "guenstigste_summe_nacht",
         ):
             return "measurement"
         return None

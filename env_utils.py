@@ -144,6 +144,18 @@ def set_vorausschau_stunden(value: int) -> bool:
     return write_env_file(ACCOUNT_ENV, data)
 
 
+def get_nur_nacht() -> bool:
+    """Gibt zurück ob nur Nachtzeiten gesucht werden sollen."""
+    return read_env_value(ACCOUNT_ENV, "nur_nacht", "False").lower() == "true"
+
+
+def set_nur_nacht(value: bool) -> bool:
+    """Setzt den Nacht-Modus in der account.env."""
+    data = read_env_file(ACCOUNT_ENV)
+    data["nur_nacht"] = str(value)
+    return write_env_file(ACCOUNT_ENV, data)
+
+
 def get_secrets() -> dict:
     """Gibt die Zugangsdaten als dict zurück (IONA_BOX, USERNAME, PASSWORD)."""
     return read_env_file(SECRETS_ENV)
