@@ -8,6 +8,18 @@ Eine **Home Assistant Custom Integration**, die Energiedaten aus dem **iONA-Syst
 
 ---
 
+> **⚠️ Experimentell – keine Abrechnungsgrundlage**
+>
+> Diese Integration ist ein **experimentelles Community-Projekt** und eignet sich **nicht** als Grundlage für die Abrechnung mit enviaM. Angezeige Verbrauchs- und Preiswerte können von der tatsächlichen enviaM-Rechnung abweichen, u. a. wegen:
+>
+> - **Zeitliche Differenzen:** Spotpreise werden über öffentliche APIs abgerufen und können je nach Abrufzeitpunkt, Caching und Netzwerkverzögerung vom exakten Zeitpunkt der tatsächlichen Messung abweichen. Bereits wenige Minuten Versatz zwischen Preis- und Verbrauchszuordnung führen zu Abweichungen.
+> - **Strompreis-Berechnung:** Die Bruttopreis-Berechnung (Netzentgelte, Umlagen, Steuern, MwSt.) basiert auf öffentlich verfügbaren Durchschnittswerten und kann von den individuellen Vertragskonditionen bei enviaM abweichen. Tarifänderungen, Sonderbedingungen oder regionale Unterschiede werden nicht automatisch berücksichtigt.
+> - **Messgenauigkeit:** Die iONA Box liefert Momentanwerte per Smart-Meter-Infrarot-Schnittstelle. Rundungsdifferenzen, Abtastraten und kurzzeitige Aussetzer (z. B. bei WLAN-Unterbrechungen) können zu geringfügigen Abweichungen gegenüber dem geeichten Zählerstand führen.
+>
+> **Die allein verbindliche Abrechnung erfolgt durch enviaM auf Basis des geeichten Stromzählers.**
+
+---
+
 ## Über dieses Projekt
 
 Dieses Projekt ist ein **privates Open-Source-Projekt**. Der Autor ist Mitarbeiter bei **enviaM** und arbeitet dort auch am iONA-Produkt mit. Ziel ist es, der Community die iONA-Daten für Home Assistant zugänglich zu machen – insbesondere für Nutzer mit einem enviaM-Stromvertrag und installiertem iONA-Ausleser.
