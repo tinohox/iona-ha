@@ -130,13 +130,16 @@ class IonaSensor(CoordinatorEntity, Entity):
 
     ENERGY_KEYS = {"Gesamtverbrauch", "Gesamteinspeisung"}
     POWER_KEYS = {"Momentanleistung"}
-    VISION_KEYS = {
+    VISION_PRICE_KEYS = {
         "aktueller_preis",
+    }
+    VISION_TOOLS_KEYS = {
         "guenstigste_startzeit",
         "guenstigste_summe",
         "guenstigste_startzeit_nacht",
         "guenstigste_summe_nacht",
     }
+    VISION_KEYS = VISION_PRICE_KEYS | VISION_TOOLS_KEYS
 
     def __init__(self, coordinator, device_id: str, sensor_key: str, attributes: dict):
         super().__init__(coordinator)
@@ -161,6 +164,8 @@ class IonaSensor(CoordinatorEntity, Entity):
                 "guenstigste_startzeit_nacht": f"günstigste Startzeit für {stunden}h Nachts",
                 "guenstigste_summe_nacht": f"Durchschnittskosten für die {stunden}h Nachts",
             }
+            if self._sensor_key in self.VISION_TOOLS_KEYS:
+                return f"Vision Tools – {name_map.get(self._sensor_key, self._sensor_key)}"
             return f"mein Strom Vision – {name_map.get(self._sensor_key, self._sensor_key)}"
         return f"Stromzähler {self._sensor_key}"
 
@@ -241,6 +246,13 @@ class IonaSensor(CoordinatorEntity, Entity):
     @property
     def device_info(self) -> dict:
         if self._is_vision_data():
+            if self._sensor_key in self.VISION_TOOLS_KEYS:
+                return {
+                    "identifiers": {("iona", "vision_tools")},
+                    "name": "mein Strom Vision Tools",
+                    "manufacturer": "enviaM",
+                    "model": "Vision Optimierung",
+                }
             return {
                 "identifiers": {("iona", "vision_strom")},
                 "name": "mein Strom Vision",

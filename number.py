@@ -38,7 +38,7 @@ class IonaStundenBlockNumber(NumberEntity):
 
     @property
     def name(self) -> str:
-        return "mein Strom Vision – Zeitraum"
+        return "Vision Tools – Zeitraum"
 
     @property
     def unique_id(self) -> str:
@@ -71,10 +71,10 @@ class IonaStundenBlockNumber(NumberEntity):
     @property
     def device_info(self) -> dict:
         return {
-            "identifiers": {("iona", "vision_strom")},
-            "name": "mein Strom Vision",
+            "identifiers": {("iona", "vision_tools")},
+            "name": "mein Strom Vision Tools",
             "manufacturer": "enviaM",
-            "model": "Vision Sensor",
+            "model": "Vision Optimierung",
         }
 
     async def async_set_native_value(self, value: float) -> None:
@@ -110,7 +110,7 @@ class IonaVorausschauNumber(NumberEntity):
 
     @property
     def name(self) -> str:
-        return "mein Strom Vision – Vorausschau"
+        return "Vision Tools – Vorausschau"
 
     @property
     def unique_id(self) -> str:
@@ -143,10 +143,10 @@ class IonaVorausschauNumber(NumberEntity):
     @property
     def device_info(self) -> dict:
         return {
-            "identifiers": {("iona", "vision_strom")},
-            "name": "mein Strom Vision",
+            "identifiers": {("iona", "vision_tools")},
+            "name": "mein Strom Vision Tools",
             "manufacturer": "enviaM",
-            "model": "Vision Sensor",
+            "model": "Vision Optimierung",
         }
 
     async def async_set_native_value(self, value: float) -> None:
