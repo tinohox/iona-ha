@@ -340,7 +340,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         for key in list(device_data.keys()):
             if key in ("device_id", "source") or key.endswith("_unit"):
                 continue
-            if is_vision and key in ("timestamp", "plz", "stunden_block"):
+            if is_vision and key in ("timestamp", "plz", "stunden_block", "preisverlauf"):
                 continue
             if not is_vision and (key == "timestamp" or key.endswith("_timestamp")):
                 continue
