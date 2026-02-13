@@ -195,7 +195,7 @@ class IonaSensor(CoordinatorEntity, Entity):
             if value:
                 try:
                     dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-                    return dt.strftime("%H:%M")
+                    return dt.isoformat()
                 except Exception:
                     return value
 
