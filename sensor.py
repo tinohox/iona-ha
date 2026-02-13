@@ -18,7 +18,7 @@ from homeassistant.helpers.update_coordinator import (
 from tinydb import TinyDB
 
 from .const import INTERVAL_SENSOR_UPDATE
-from .env_utils import is_vision_enabled
+from .env_utils import is_vision_enabled, is_vision_tools_enabled
 
 # Pfade relativ zur Datei
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -162,7 +162,7 @@ class IonaSensor(CoordinatorEntity, Entity):
             }
             if self._sensor_key in self.VISION_TOOLS_KEYS:
                 return f"Vision Tools – {name_map.get(self._sensor_key, self._sensor_key)}"
-            return f"mein Strom Vision – {name_map.get(self._sensor_key, self._sensor_key)}"
+            return f"Stromzähler {name_map.get(self._sensor_key, self._sensor_key)}"
         return f"Stromzähler {self._sensor_key}"
 
     @property
@@ -240,20 +240,14 @@ class IonaSensor(CoordinatorEntity, Entity):
 
     @property
     def device_info(self) -> dict:
-        if self._is_vision_data():
-            if self._sensor_key in self.VISION_TOOLS_KEYS:
-                return {
-                    "identifiers": {("iona", "vision_tools")},
-                    "name": "mein Strom Vision Tools",
-                    "manufacturer": "enviaM",
-                    "model": "Vision Optimierung",
-                }
+        if self._is_vision_data() and self._sensor_key in self.VISION_TOOLS_KEYS:
             return {
-                "identifiers": {("iona", "vision_strom")},
-                "name": "mein Strom Vision",
+                "identifiers": {("iona", "vision_tools")},
+                "name": "mein Strom Vision Tools",
                 "manufacturer": "enviaM",
-                "model": "Vision Sensor",
+                "model": "Vision Optimierung",
             }
+        # aktueller_preis und Meter-Sensoren → Stromzähler-Gerät
         return {
             "identifiers": {("iona", self._device_id)},
             "name": "mein Stromzähler",
@@ -302,6 +296,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     logger = getLogger(__name__)
 
     vision_tariff_enabled = await hass.async_add_executor_job(is_vision_enabled)
+    vision_tools_enabled = await hass.async_add_executor_job(is_vision_tools_enabled)
 
     async def async_load():
         return await load_all_db(hass)
@@ -337,6 +332,10 @@ async def async_setup_entry(hass, entry, async_add_entities):
             if not is_vision and (key == "timestamp" or key.endswith("_timestamp")):
                 continue
 
+            # Vision Tools Sensoren nur wenn vision_tools aktiviert
+            if is_vision and key in IonaSensor.VISION_TOOLS_KEYS and not vision_tools_enabled:
+                continue
+
             sensors.append(IonaSensor(coordinator, device_id, key, device_data))
 
     async_add_entities(sensors, update_before_add=True)
@@ -353,3 +352,17 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 removed += 1
         if removed:
             logger.info("%d Vision-Sensoren entfernt (vision_tariff deaktiviert)", removed)
+
+    # Vision-Tools-Sensoren aus Registry entfernen wenn deaktiviert
+    if not vision_tools_enabled:
+        from homeassistant.helpers import entity_registry as er
+
+        entity_registry = er.async_get(hass)
+        removed = 0
+        for entity_id in list(entity_registry.entities.keys()):
+            ent = entity_registry.entities.get(entity_id)
+            if ent and ent.unique_id and ("guenstigste_startzeit" in ent.unique_id or "guenstigste_summe" in ent.unique_id):
+                entity_registry.async_remove(entity_id)
+                removed += 1
+        if removed:
+            logger.info("%d Vision-Tools-Sensoren entfernt (vision_tools deaktiviert)", removed)

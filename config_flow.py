@@ -16,7 +16,7 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
-from .const import DOMAIN, CONF_IONA_BOX, CONF_USERNAME, CONF_PASSWORD, CONF_VISION_TARIFF
+from .const import DOMAIN, CONF_IONA_BOX, CONF_USERNAME, CONF_PASSWORD, CONF_VISION_TARIFF, CONF_VISION_TOOLS
 from .env_utils import (
     read_env_file,
     write_env_file,
@@ -45,6 +45,9 @@ class IonaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             account_data[CONF_VISION_TARIFF] = str(
                 user_input.get(CONF_VISION_TARIFF, False)
+            )
+            account_data[CONF_VISION_TOOLS] = str(
+                user_input.get(CONF_VISION_TOOLS, False)
             )
             await self.hass.async_add_executor_job(
                 write_env_file, ACCOUNT_ENV, account_data
@@ -86,6 +89,10 @@ class IonaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_VISION_TARIFF,
                     default=account_env.get(CONF_VISION_TARIFF, "False").lower() == "true",
                 ): bool,
+                vol.Required(
+                    CONF_VISION_TOOLS,
+                    default=account_env.get(CONF_VISION_TOOLS, "False").lower() == "true",
+                ): bool,
             }
         )
         return self.async_show_form(
@@ -111,6 +118,9 @@ class IonaOptionsFlowHandler(config_entries.OptionsFlow):
             )
             account_data[CONF_VISION_TARIFF] = str(
                 user_input.get(CONF_VISION_TARIFF, False)
+            )
+            account_data[CONF_VISION_TOOLS] = str(
+                user_input.get(CONF_VISION_TOOLS, False)
             )
             await self.hass.async_add_executor_job(
                 write_env_file, ACCOUNT_ENV, account_data
@@ -143,6 +153,10 @@ class IonaOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Required(
                     CONF_VISION_TARIFF,
                     default=account_env.get(CONF_VISION_TARIFF, "False").lower() == "true",
+                ): bool,
+                vol.Required(
+                    CONF_VISION_TOOLS,
+                    default=account_env.get(CONF_VISION_TOOLS, "False").lower() == "true",
                 ): bool,
             }
         )

@@ -5,16 +5,16 @@ import logging
 from homeassistant.components.switch import SwitchEntity
 
 from .const import DOMAIN
-from .env_utils import get_nur_nacht, set_nur_nacht, is_vision_enabled
+from .env_utils import get_nur_nacht, set_nur_nacht, is_vision_tools_enabled
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Richte die Switch-Plattform ein."""
-    vision_enabled = await hass.async_add_executor_job(is_vision_enabled)
+    tools_enabled = await hass.async_add_executor_job(is_vision_tools_enabled)
 
-    if vision_enabled:
+    if tools_enabled:
         async_add_entities([IonaNachtModusSwitch(hass)], update_before_add=True)
 
 

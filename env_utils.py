@@ -116,6 +116,11 @@ def is_vision_enabled() -> bool:
     return read_env_value(ACCOUNT_ENV, "vision_tariff", "False").lower() == "true"
 
 
+def is_vision_tools_enabled() -> bool:
+    """Prüft ob die Vision Tools aktiviert sind."""
+    return read_env_value(ACCOUNT_ENV, "vision_tools", "False").lower() == "true"
+
+
 def get_max_datenlage_stunden() -> int:
     """Ermittelt die maximale Datenverfügbarkeit der Brutto-Spotpreise in ganzen Stunden.
 

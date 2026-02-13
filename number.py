@@ -11,7 +11,7 @@ from .env_utils import (
     get_vorausschau_stunden,
     set_vorausschau_stunden,
     get_max_datenlage_stunden,
-    is_vision_enabled,
+    is_vision_tools_enabled,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -19,9 +19,9 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Richte die Number-Plattform ein."""
-    vision_enabled = await hass.async_add_executor_job(is_vision_enabled)
+    tools_enabled = await hass.async_add_executor_job(is_vision_tools_enabled)
 
-    if vision_enabled:
+    if tools_enabled:
         async_add_entities(
             [IonaStundenBlockNumber(hass), IonaVorausschauNumber(hass)],
             update_before_add=True,

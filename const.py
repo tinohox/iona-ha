@@ -8,6 +8,7 @@ CONF_IONA_BOX = "IONA_BOX"
 CONF_USERNAME = "USERNAME"
 CONF_PASSWORD = "PASSWORD"
 CONF_VISION_TARIFF = "vision_tariff"
+CONF_VISION_TOOLS = "vision_tools"
 
 # Abruf-Intervalle (Sekunden)
 INTERVAL_LAN_DATA = 5

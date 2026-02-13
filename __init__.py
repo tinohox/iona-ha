@@ -18,6 +18,7 @@ from .const import (
     CONF_USERNAME,
     CONF_PASSWORD,
     CONF_VISION_TARIFF,
+    CONF_VISION_TOOLS,
 )
 from .env_backup import restore_env_from_backup, backup_env_files
 from .env_utils import (
@@ -98,10 +99,14 @@ async def _restore_credentials_from_entry(hass: HomeAssistant, entry: ConfigEntr
     account_exists = await hass.async_add_executor_job(env_file_exists, ACCOUNT_ENV)
     if not account_exists and entry.data:
         vision = entry.data.get(CONF_VISION_TARIFF, False)
+        tools = entry.data.get(CONF_VISION_TOOLS, False)
         await hass.async_add_executor_job(
             write_env_file,
             ACCOUNT_ENV,
-            {CONF_VISION_TARIFF: str(vision)},
+            {
+                CONF_VISION_TARIFF: str(vision),
+                CONF_VISION_TOOLS: str(tools),
+            },
         )
         _LOGGER.info("Account-Einstellungen aus ConfigEntry wiederhergestellt")
 
