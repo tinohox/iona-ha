@@ -156,7 +156,7 @@ class IonaSensor(CoordinatorEntity, Entity):
             device = self.coordinator.data.get(self._device_id, {})
             stunden = device.get("stunden_block", 2)
             name_map = {
-                "aktueller_preis": "aktueller Strompreis",
+                "aktueller_preis": "Strompreis für die aktuelle 1/4h",
                 "guenstigste_startzeit": f"günstigste Startzeit für {stunden}h",
                 "guenstigste_summe": f"Durchschnittskosten für die {stunden}h",
             }
