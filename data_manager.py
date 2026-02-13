@@ -123,39 +123,35 @@ class IonaDataManager:
     # ------------------------------------------------------------------ #
 
     async def _run_initial_fetch(self) -> None:
-        """Initiale Abfolge: Tokens → Daten → Berechnung."""
-        _LOGGER.debug("Starte initiale Datenabfrage")
+        """Initiale Abfolge: Tokens → Daten → Berechnung.
 
-        # 1. Tokens beschaffen (falls nicht vorhanden)
-        if not await self.hass.async_add_executor_job(env_file_exists, WEB_TOKEN_ENV):
-            await self._task_web_token()
+        Holt IMMER alle Daten beim Start, damit Sensoren sofort Werte haben.
+        Freshness-Checks erst bei den periodischen Tasks.
+        """
+        _LOGGER.info("Starte initiale Datenabfrage")
 
-        if not await self.hass.async_add_executor_job(env_file_exists, LAN_TOKEN_ENV):
-            await self._task_lan_token()
+        # 1. Web-Token IMMER holen (Token kann abgelaufen sein)
+        await self._task_web_token()
 
-        # 2. Zählerdaten holen
+        # 2. LAN-Token holen
+        await self._task_lan_token()
+
+        # 3. Zählerdaten holen
         await self._task_lan_data()
 
-        # 3. Preisdaten nur wenn nicht frisch
-        if not await self.hass.async_add_executor_job(
-            self._is_data_fresh, "spotpreise_db.json", FRESHNESS_SPOT_PRICES
-        ):
-            await self._task_spot_prices()
+        # 4. Spotpreise IMMER holen beim Start
+        await self._task_spot_prices_force()
 
-        if not await self.hass.async_add_executor_job(
-            self._is_data_fresh, "tariff_db.json", FRESHNESS_TARIFF
-        ):
-            await self._task_tariff_data()
+        # 5. Tarifdaten IMMER holen beim Start
+        await self._task_tariff_data_force()
 
-        if not await self.hass.async_add_executor_job(
-            self._is_data_fresh, "spotpreise_brutto_db.json", FRESHNESS_BRUTTO
-        ):
-            await self._task_calc_preise()
+        # 6. Bruttopreise berechnen
+        await self._task_calc_preise()
 
-        if not await self.hass.async_add_executor_job(
-            self._is_data_fresh, "vision_db.json", FRESHNESS_VISION
-        ):
-            await self._task_vision()
+        # 7. Vision berechnen
+        await self._task_vision()
+
+        _LOGGER.info("Initiale Datenabfrage abgeschlossen")
 
     # ------------------------------------------------------------------ #
     #  Task-Funktionen (jeweils ein App-Modul)                            #
@@ -214,6 +210,13 @@ class IonaDataManager:
         ok = await self.hass.async_add_executor_job(_run)
         _LOGGER.info("Fertig: get_spot_prices → %s", "OK" if ok else "FEHLER")
 
+    async def _task_spot_prices_force(self) -> None:
+        """Spotpreise IMMER abrufen (für initialen Start)."""
+        _LOGGER.info("Starte: get_spot_prices (initial)")
+        from .app.get_spot_prices import run as _run
+        ok = await self.hass.async_add_executor_job(_run)
+        _LOGGER.info("Fertig: get_spot_prices → %s", "OK" if ok else "FEHLER")
+
     async def _task_tariff_data(self) -> None:
         """Tarifdaten von enviaM abrufen – nur wenn veraltet oder fehlend."""
         if not await self.hass.async_add_executor_job(env_file_exists, WEB_TOKEN_ENV):
@@ -223,6 +226,13 @@ class IonaDataManager:
         ):
             return
         _LOGGER.info("Starte: get_tariff_data")
+        from .app.get_tariff_data import run as _run
+        ok = await self.hass.async_add_executor_job(_run)
+        _LOGGER.info("Fertig: get_tariff_data → %s", "OK" if ok else "FEHLER")
+
+    async def _task_tariff_data_force(self) -> None:
+        """Tarifdaten IMMER abrufen (für initialen Start)."""
+        _LOGGER.info("Starte: get_tariff_data (initial)")
         from .app.get_tariff_data import run as _run
         ok = await self.hass.async_add_executor_job(_run)
         _LOGGER.info("Fertig: get_tariff_data → %s", "OK" if ok else "FEHLER")
