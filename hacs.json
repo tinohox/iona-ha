@@ -1,0 +1,8 @@
+{
+  "name": "iona-ha",
+  "content_in_root": true,
+  "domains": ["sensor", "number", "switch"],
+  "country": "DE",
+  "iot_class": "local_polling",
+  "render_readme": true
+}
