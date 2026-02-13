@@ -221,6 +221,8 @@ class IonaSensor(CoordinatorEntity, Entity):
             attrs["device_class"] = "monetary"
             attrs["state_class"] = "measurement"
             attrs.setdefault("unit_of_measurement", "€/kWh")
+        elif self._is_vision_data() and self._sensor_key == "guenstigste_startzeit":
+            attrs["device_class"] = "timestamp"
 
         return attrs
 
@@ -270,6 +272,8 @@ class IonaSensor(CoordinatorEntity, Entity):
             "guenstigste_summe",
         ):
             return "monetary"
+        if self._is_vision_data() and self._sensor_key == "guenstigste_startzeit":
+            return "timestamp"
         return None
 
     @property
