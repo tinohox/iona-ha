@@ -47,6 +47,19 @@ def _read_stunden_block() -> int:
     return 2
 
 
+def _read_vorausschau_stunden() -> int:
+    """Liest die Vorausschau-Stunden aus account.env (10-48, Standard 12)."""
+    try:
+        with open(ACCOUNT_ENV, "r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("vorausschau_stunden="):
+                    val = line.strip().split("=", 1)[1].strip('"')
+                    return max(10, min(48, int(val)))
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+    return 12
+
+
 def _lade_spotpreise() -> list[dict]:
     """Lädt Brutto-Spotpreise und gibt sortierte Liste zurück."""
     if not os.path.isfile(SPOTPREIS_BRUTTO_DB):
@@ -151,6 +164,7 @@ def _finde_guenstigste_startzeit(
 def run() -> bool:
     """Vision-Berechnung durchführen und in DB speichern."""
     stunden = _read_stunden_block()
+    vorausschau = _read_vorausschau_stunden()
 
     preise = _lade_spotpreise()
     if not preise:
@@ -159,11 +173,11 @@ def run() -> bool:
 
     aktueller_preis = _finde_aktuellen_preis(preise)
 
-    start, avg = _finde_guenstigste_startzeit(preise, stunden, nur_nacht=False)
+    start, avg = _finde_guenstigste_startzeit(preise, stunden, nur_nacht=False, max_vorausschau_h=vorausschau)
     guenstigste_zeit = start["timestamp_str"] if start else None
     guenstigste_summe = round(avg, 5) if avg and avg != float("inf") else None
 
-    start_n, avg_n = _finde_guenstigste_startzeit(preise, stunden, nur_nacht=True)
+    start_n, avg_n = _finde_guenstigste_startzeit(preise, stunden, nur_nacht=True, max_vorausschau_h=vorausschau)
     guenstigste_zeit_nacht = start_n["timestamp_str"] if start_n else None
     guenstigste_summe_nacht = round(avg_n, 5) if avg_n and avg_n != float("inf") else None
 

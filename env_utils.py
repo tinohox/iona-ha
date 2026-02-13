@@ -128,6 +128,22 @@ def set_stunden_block(value: int) -> bool:
     return write_env_file(ACCOUNT_ENV, data)
 
 
+def get_vorausschau_stunden() -> int:
+    """Gibt die konfigurierte Vorausschau in Stunden (10-48) zurück."""
+    try:
+        val = int(read_env_value(ACCOUNT_ENV, "vorausschau_stunden", "12"))
+        return max(10, min(48, val))
+    except (ValueError, TypeError):
+        return 12
+
+
+def set_vorausschau_stunden(value: int) -> bool:
+    """Setzt die Vorausschau-Stunden in der account.env."""
+    data = read_env_file(ACCOUNT_ENV)
+    data["vorausschau_stunden"] = str(max(10, min(48, int(value))))
+    return write_env_file(ACCOUNT_ENV, data)
+
+
 def get_secrets() -> dict:
     """Gibt die Zugangsdaten als dict zurück (IONA_BOX, USERNAME, PASSWORD)."""
     return read_env_file(SECRETS_ENV)
