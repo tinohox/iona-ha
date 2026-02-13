@@ -238,6 +238,15 @@ class IonaSensor(CoordinatorEntity, Entity):
         device = self.coordinator.data.get(self._device_id, {})
         return device.get(f"{self._sensor_key}_unit", self._unit_cached)
 
+    def _find_meter_device_id(self) -> str:
+        """Findet die device_id des Stromzählers aus den Coordinator-Daten."""
+        for dev_id, dev_data in self.coordinator.data.items():
+            if isinstance(dev_data, dict) and not any(
+                k in dev_data for k in self.VISION_KEYS
+            ):
+                return dev_id
+        return self._device_id
+
     @property
     def device_info(self) -> dict:
         if self._is_vision_data() and self._sensor_key in self.VISION_TOOLS_KEYS:
@@ -248,8 +257,9 @@ class IonaSensor(CoordinatorEntity, Entity):
                 "model": "Vision Optimierung",
             }
         # aktueller_preis und Meter-Sensoren → Stromzähler-Gerät
+        meter_id = self._find_meter_device_id() if self._is_vision_data() else self._device_id
         return {
-            "identifiers": {("iona", self._device_id)},
+            "identifiers": {("iona", meter_id)},
             "name": "mein Stromzähler",
             "manufacturer": "iona",
             "model": "Stromzähler",
