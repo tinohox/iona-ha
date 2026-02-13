@@ -1,0 +1,22 @@
+# iona-ha – .gitignore
+
+# Umgebungsdateien (Zugangsdaten)
+*.env
+app/env/
+
+# Laufzeit-Daten
+app/data/*.json
+app/logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log

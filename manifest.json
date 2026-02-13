@@ -1,0 +1,15 @@
+{
+  "domain": "iona",
+  "name": "iona-ha",
+  "version": "2.0.0",
+  "documentation": "https://github.com/tinohox/iona-ha",
+  "dependencies": [],
+  "codeowners": ["@tinoHoX"],
+  "config_flow": true,
+  "requirements": [
+    "tinydb==4.8.0",
+    "requests"
+  ],
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/tinohox/iona-ha/issues"
+}
