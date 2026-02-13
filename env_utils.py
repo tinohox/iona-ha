@@ -4,15 +4,19 @@ Zentralisiert alle Lese-/Schreiboperationen für .env Dateien,
 damit keine doppelte Logik in verschiedenen Modulen existiert.
 """
 
+import json
 import os
 import shutil
 import logging
+from datetime import datetime, timedelta
 
 _LOGGER = logging.getLogger(__name__)
 
 # Pfade relativ zu diesem Modul
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_DIR = os.path.join(_BASE_DIR, "app", "env")
+_DATA_DIR = os.path.join(_BASE_DIR, "app", "data")
+_BRUTTO_DB = os.path.join(_DATA_DIR, "spotpreise_brutto_db.json")
 
 # Dateinamen (nach Migration von "accound" → "account")
 ACCOUNT_ENV = "account.env"
@@ -112,35 +116,80 @@ def is_vision_enabled() -> bool:
     return read_env_value(ACCOUNT_ENV, "vision_tariff", "False").lower() == "true"
 
 
-def get_stunden_block() -> int:
-    """Gibt den konfigurierten Stunden-Block (1-8) zurück."""
+def get_max_datenlage_stunden() -> int:
+    """Ermittelt die maximale Datenverfügbarkeit der Brutto-Spotpreise in ganzen Stunden.
+
+    Liest den letzten Timestamp aus spotpreise_brutto_db.json und berechnet
+    die Differenz zu jetzt.  Gibt mindestens 2 zurück (Zeitraum 1 + Vorausschau 1).
+    """
     try:
+        if not os.path.isfile(_BRUTTO_DB):
+            return 48  # Fallback wenn keine Daten
+
+        with open(_BRUTTO_DB, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+
+        timestamps = []
+        for entry in data.get("_default", {}).values():
+            ts_str = entry.get("timestamp")
+            if ts_str:
+                try:
+                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    timestamps.append(ts)
+                except (ValueError, TypeError):
+                    continue
+
+        if not timestamps:
+            return 48
+
+        letzter_ts = max(timestamps)
+        now = datetime.now().astimezone()
+        diff_h = int((letzter_ts - now).total_seconds() / 3600)
+        # Mindestens 2 (1h Zeitraum + 1h Vorausschau), maximal realer Wert
+        return max(2, diff_h)
+    except (json.JSONDecodeError, OSError, Exception):
+        return 48
+
+
+def get_stunden_block() -> int:
+    """Gibt den konfigurierten Stunden-Block zurück (1 bis Datenlage-1)."""
+    try:
+        max_daten = get_max_datenlage_stunden()
+        max_val = max(1, max_daten - 1)
         val = int(read_env_value(ACCOUNT_ENV, "stunden_block", "2"))
-        return max(1, min(8, val))
+        return max(1, min(max_val, val))
     except (ValueError, TypeError):
         return 2
 
 
 def set_stunden_block(value: int) -> bool:
     """Setzt den Stunden-Block in der account.env."""
+    max_daten = get_max_datenlage_stunden()
+    max_val = max(1, max_daten - 1)
     data = read_env_file(ACCOUNT_ENV)
-    data["stunden_block"] = str(max(1, min(8, int(value))))
+    data["stunden_block"] = str(max(1, min(max_val, int(value))))
     return write_env_file(ACCOUNT_ENV, data)
 
 
 def get_vorausschau_stunden() -> int:
-    """Gibt die konfigurierte Vorausschau in Stunden (10-48) zurück."""
+    """Gibt die konfigurierte Vorausschau zurück (min = Zeitraum+1, max = Datenlage)."""
     try:
+        zeitraum = get_stunden_block()
+        max_daten = get_max_datenlage_stunden()
+        min_val = zeitraum + 1
         val = int(read_env_value(ACCOUNT_ENV, "vorausschau_stunden", "12"))
-        return max(10, min(48, val))
+        return max(min_val, min(max_daten, val))
     except (ValueError, TypeError):
         return 12
 
 
 def set_vorausschau_stunden(value: int) -> bool:
-    """Setzt die Vorausschau-Stunden in der account.env."""
+    """Setzt die Vorausschau-Stunden in der account.env (min = Zeitraum+1, max = Datenlage)."""
+    zeitraum = get_stunden_block()
+    max_daten = get_max_datenlage_stunden()
+    min_val = zeitraum + 1
     data = read_env_file(ACCOUNT_ENV)
-    data["vorausschau_stunden"] = str(max(10, min(48, int(value))))
+    data["vorausschau_stunden"] = str(max(min_val, min(max_daten, int(value))))
     return write_env_file(ACCOUNT_ENV, data)
 
 

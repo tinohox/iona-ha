@@ -35,26 +35,28 @@ NACHT_ENDE = 7
 
 
 def _read_stunden_block() -> int:
-    """Liest den Stunden-Block aus account.env (1-8, Standard 2)."""
+    """Liest den Stunden-Block aus account.env (min 1, Standard 2)."""
     try:
         with open(ACCOUNT_ENV, "r", encoding="utf-8") as fh:
             for line in fh:
                 if line.startswith("stunden_block="):
                     val = line.strip().split("=", 1)[1].strip('"')
-                    return max(1, min(8, int(val)))
+                    return max(1, int(val))
     except (FileNotFoundError, ValueError, OSError):
         pass
     return 2
 
 
 def _read_vorausschau_stunden() -> int:
-    """Liest die Vorausschau-Stunden aus account.env (10-48, Standard 12)."""
+    """Liest die Vorausschau-Stunden aus account.env (min = Zeitraum+1)."""
     try:
+        stunden_block = _read_stunden_block()
+        min_val = stunden_block + 1
         with open(ACCOUNT_ENV, "r", encoding="utf-8") as fh:
             for line in fh:
                 if line.startswith("vorausschau_stunden="):
                     val = line.strip().split("=", 1)[1].strip('"')
-                    return max(10, min(48, int(val)))
+                    return max(min_val, int(val))
     except (FileNotFoundError, ValueError, OSError):
         pass
     return 12

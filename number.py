@@ -10,6 +10,7 @@ from .env_utils import (
     set_stunden_block,
     get_vorausschau_stunden,
     set_vorausschau_stunden,
+    get_max_datenlage_stunden,
     is_vision_enabled,
 )
 
@@ -28,13 +29,14 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
 
 class IonaStundenBlockNumber(NumberEntity):
-    """Number-Entity für den Stunden-Block (1-8h)."""
+    """Number-Entity für den Stunden-Block (dynamisch bis Datenlage-1)."""
 
     _attr_has_entity_name = True
 
     def __init__(self, hass):
         self._hass = hass
         self._attr_native_value = 2
+        self._cached_max_datenlage = 48  # wird in async_update aktualisiert
 
     @property
     def name(self) -> str:
@@ -50,7 +52,8 @@ class IonaStundenBlockNumber(NumberEntity):
 
     @property
     def native_max_value(self) -> float:
-        return 8
+        # Zeitraum darf maximal Datenlage - 1 sein (1h für Vorausschau)
+        return max(1, self._cached_max_datenlage - 1)
 
     @property
     def native_step(self) -> float:
@@ -78,10 +81,22 @@ class IonaStundenBlockNumber(NumberEntity):
         }
 
     async def async_set_native_value(self, value: float) -> None:
-        """Setze den neuen Wert und löse sofort Vision-Neuberechnung aus."""
+        """Setze den neuen Wert und passe Vorausschau an falls nötig."""
         int_value = int(value)
         await self._hass.async_add_executor_job(set_stunden_block, int_value)
         self._attr_native_value = int_value
+
+        # Vorausschau muss immer > Zeitraum sein → ggf. anheben
+        vorausschau = await self._hass.async_add_executor_job(get_vorausschau_stunden)
+        if vorausschau <= int_value:
+            new_vorausschau = int_value + 1
+            await self._hass.async_add_executor_job(
+                set_vorausschau_stunden, new_vorausschau
+            )
+            _LOGGER.info(
+                "Vorausschau automatisch auf %dh angehoben (Zeitraum=%dh)",
+                new_vorausschau, int_value,
+            )
 
         # Vision sofort neu berechnen statt auf nächsten 5-Min-Zyklus zu warten
         manager = self._hass.data.get(DOMAIN, {}).get("manager")
@@ -93,20 +108,25 @@ class IonaStundenBlockNumber(NumberEntity):
                 _LOGGER.warning("Vision-Neuberechnung nach Regler-Änderung fehlgeschlagen")
 
     async def async_update(self) -> None:
-        """Aktualisiere den Wert aus der Datei."""
+        """Aktualisiere den Wert und die Datenlage."""
         self._attr_native_value = await self._hass.async_add_executor_job(
             get_stunden_block
+        )
+        self._cached_max_datenlage = await self._hass.async_add_executor_job(
+            get_max_datenlage_stunden
         )
 
 
 class IonaVorausschauNumber(NumberEntity):
-    """Number-Entity für die Vorausschau (10-48h)."""
+    """Number-Entity für die Vorausschau (Zeitraum+1 bis Datenlage)."""
 
     _attr_has_entity_name = True
 
     def __init__(self, hass):
         self._hass = hass
         self._attr_native_value = 12
+        self._cached_zeitraum = 2  # Cache für dynamisches Minimum
+        self._cached_max_datenlage = 48  # wird in async_update aktualisiert
 
     @property
     def name(self) -> str:
@@ -118,11 +138,11 @@ class IonaVorausschauNumber(NumberEntity):
 
     @property
     def native_min_value(self) -> float:
-        return 10
+        return self._cached_zeitraum + 1
 
     @property
     def native_max_value(self) -> float:
-        return 48
+        return max(self._cached_zeitraum + 1, self._cached_max_datenlage)
 
     @property
     def native_step(self) -> float:
@@ -150,10 +170,22 @@ class IonaVorausschauNumber(NumberEntity):
         }
 
     async def async_set_native_value(self, value: float) -> None:
-        """Setze den neuen Wert und löse sofort Vision-Neuberechnung aus."""
+        """Setze den neuen Wert (muss > Zeitraum sein)."""
         int_value = int(value)
+        zeitraum = await self._hass.async_add_executor_job(get_stunden_block)
+        min_vorausschau = zeitraum + 1
+
+        # Erzwinge Minimum
+        if int_value < min_vorausschau:
+            int_value = min_vorausschau
+            _LOGGER.info(
+                "Vorausschau auf Minimum %dh korrigiert (Zeitraum=%dh)",
+                int_value, zeitraum,
+            )
+
         await self._hass.async_add_executor_job(set_vorausschau_stunden, int_value)
         self._attr_native_value = int_value
+        self._cached_zeitraum = zeitraum
 
         # Vision sofort neu berechnen
         manager = self._hass.data.get(DOMAIN, {}).get("manager")
@@ -165,8 +197,14 @@ class IonaVorausschauNumber(NumberEntity):
                 _LOGGER.warning("Vision-Neuberechnung nach Vorausschau-Änderung fehlgeschlagen")
 
     async def async_update(self) -> None:
-        """Aktualisiere den Wert aus der Datei."""
+        """Aktualisiere den Wert, Zeitraum-Cache und Datenlage."""
         self._attr_native_value = await self._hass.async_add_executor_job(
             get_vorausschau_stunden
+        )
+        self._cached_zeitraum = await self._hass.async_add_executor_job(
+            get_stunden_block
+        )
+        self._cached_max_datenlage = await self._hass.async_add_executor_job(
+            get_max_datenlage_stunden
         )
 
