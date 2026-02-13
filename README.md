@@ -34,8 +34,13 @@ Dieses Projekt ist ein **privates Open-Source-Projekt**. Der Autor ist Mitarbeit
 - **Energie-Dashboard** – volle Integration ins Home Assistant Energie-Dashboard
 - **mein Strom Vision** – optionale Spotpreis-Analyse für den dynamischen enviaM-Tarif:
   - Aktueller Strompreis (€/kWh)
-  - Günstigste Zeitfenster für konfigurierbaren Stunden-Block (1–8h)
-  - Nacht-Optimierung (22:00–06:00)
+- **mein Strom Vision Tools** – Optimierungswerkzeuge für den dynamischen Tarif:
+  - Günstigste Startzeit für konfigurierbaren Zeitraum (`device_class: timestamp` – direkt für Automations nutzbar)
+  - Durchschnittspreis für den günstigsten Zeitblock
+  - **Zeitraum-Slider** – Dauer des gewünschten Verbrauchsfensters (1h bis max. Datenlage)
+  - **Vorausschau-Slider** – Suchhorizont, dynamisch (immer > Zeitraum, max. Datenlage)
+  - **Nacht-Schalter** – Toggle für Nur-Nachtzeit-Suche (20:00–07:00)
+- **Dynamische Slider-Grenzen** – Schieberegler passen sich automatisch an die verfügbare Spotpreis-Datenlage an
 - **Automatisches Env-Backup** – Zugangsdaten werden in `.storage/` gesichert und nach HACS-Updates wiederhergestellt
 - **Minimale API-Last** – intelligentes Caching: Daten werden nur abgerufen, wenn sie fehlen oder veraltet sind
 
@@ -93,9 +98,11 @@ Alle Einstellungen können nachträglich über **Einstellungen → Geräte & Die
 
 ---
 
-## Sensoren
+## Geräte & Entitäten
 
-### Stromzähler-Sensoren
+Die Integration erstellt bis zu **drei Geräte** in Home Assistant:
+
+### 🔌 mein Stromzähler
 
 Für jeden erkannten Zähler werden automatisch Sensoren erstellt:
 
@@ -103,19 +110,61 @@ Für jeden erkannten Zähler werden automatisch Sensoren erstellt:
 |--------|---------|-------------|-------------|
 | Gesamtverbrauch | kWh | `energy` | `total_increasing` |
 | Gesamteinspeisung | kWh | `energy` | `total_increasing` |
-| Momentanleistung | W | – | – |
+| Momentanleistung | W | `power` | `measurement` |
 
-### mein Strom Vision (bei aktiviertem dynamischen Tarif)
+### 💡 mein Strom Vision
 
-| Sensor | Einheit | Beschreibung |
-|--------|---------|-------------|
-| aktueller Strompreis | €/kWh | Aktueller Brutto-Spotpreis inkl. aller Abgaben |
-| günstigste Startzeit | HH:MM | Optimaler Start für den konfigurierten Zeitblock |
-| Durchschnittskosten | €/kWh | Ø-Preis für den Zeitblock |
-| günstigste Startzeit Nachts | HH:MM | Optimaler Nacht-Start (22–06 Uhr) |
-| Durchschnittskosten Nachts | €/kWh | Ø-Preis für den Nacht-Block |
+Wird nur bei aktiviertem dynamischen Tarif (mein Strom Vision) erstellt:
 
-Zusätzlich: **Stunden-Block Slider** (1–8h) zur Konfiguration des Zeitfensters.
+| Sensor | Einheit | Device Class | Beschreibung |
+|--------|---------|-------------|-------------|
+| aktueller Strompreis | €/kWh | `monetary` | Aktueller Brutto-Spotpreis inkl. aller Abgaben |
+
+### 🛠️ mein Strom Vision Tools
+
+Optimierungswerkzeuge für den dynamischen Tarif:
+
+| Entität | Typ | Beschreibung |
+|---------|-----|-------------|
+| günstigste Startzeit | Sensor (`timestamp`) | Optimaler Startzeitpunkt für den Zeitblock – direkt für HA-Automations nutzbar |
+| Durchschnittskosten | Sensor (`monetary`) | Ø-Preis (€/kWh) im günstigsten Zeitblock |
+| Vision Tools – Zeitraum | Slider (Number) | Dauer des Verbrauchsfensters (1h bis Datenlage − 1) |
+| Vision Tools – Vorausschau | Slider (Number) | Suchhorizont (Zeitraum + 1 bis Datenlage) |
+| Vision Tools – nur Nachtstrom | Schalter (Switch) | Suche auf Nachtzeiten beschränken (20:00–07:00) |
+
+#### Dynamische Slider-Grenzen
+
+Die Schieberegler passen sich automatisch an die tatsächlich verfügbare Spotpreis-Datenlage an:
+
+- **Zeitraum**: Minimum 1h, Maximum = verfügbare Stunden − 1
+- **Vorausschau**: Minimum = Zeitraum + 1, Maximum = verfügbare Stunden
+- Wenn der **Zeitraum** erhöht wird und die **Vorausschau** zu niedrig wäre, wird sie automatisch angehoben
+- Typischerweise sind 24–48h Spotpreise verfügbar, aber die Datenlage variiert je nach API-Verfügbarkeit
+
+#### Automations-Tipp
+
+Die **günstigste Startzeit** hat `device_class: timestamp` und kann direkt in HA-Automations verwendet werden:
+
+```yaml
+automation:
+  - alias: "Wallbox bei günstigstem Strom starten"
+    trigger:
+      - platform: time
+        at: sensor.gunstigste_startzeit_fur_2h
+    action:
+      - service: switch.turn_on
+        target:
+          entity_id: switch.wallbox
+```
+
+Oder als Template-Bedingung:
+
+```yaml
+condition:
+  - condition: template
+    value_template: >
+      {{ now() >= states('sensor.gunstigste_startzeit_fur_2h') | as_datetime }}
+```
 
 ---
 
@@ -157,13 +206,14 @@ Zusätzlich: **Stunden-Block Slider** (1–8h) zur Konfiguration des Zeitfenster
 
 | Modul | Funktion |
 |-------|----------|
-| `__init__.py` | Integration-Lifecycle, Setup, Unload |
+| `__init__.py` | Integration-Lifecycle, Setup, Unload, Credential-Restore |
 | `data_manager.py` | Zentrale Steuerung aller Datenabfragen via HA Event-Loop |
 | `config_flow.py` | UI-Konfiguration (Config Flow + Options Flow) |
 | `sensor.py` | Sensor-Entities (Coordinator-Pattern) |
-| `number.py` | Stunden-Block Slider |
-| `env_utils.py` | Gemeinsame .env Dateiverwaltung |
-| `env_backup.py` | Automatisches Backup/Restore von .env Dateien |
+| `number.py` | Zeitraum- & Vorausschau-Slider (dynamische Grenzen) |
+| `switch.py` | Nacht-Modus Schalter |
+| `env_utils.py` | Gemeinsame .env Dateiverwaltung, Datenlage-Erkennung |
+| `env_backup.py` | Automatisches Backup/Restore von .env und Datendateien |
 | `app/get_web_token.py` | Web-API Authentifizierung |
 | `app/get_lan_token.py` | LAN-Token für lokale iONA Box |
 | `app/get_lan_data.py` | Live-Daten von der lokalen Box (alle 5s) |
