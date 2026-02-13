@@ -206,14 +206,6 @@ class IonaSensor(CoordinatorEntity, Entity):
         device = self.coordinator.data.get(self._device_id, {})
         attrs = dict(device) if isinstance(device, dict) else {}
 
-        # Preisverlauf nur am aktueller_preis Sensor als Attribut
-        if self._is_vision_data() and self._sensor_key == "aktueller_preis":
-            preisverlauf = device.get("preisverlauf")
-            if preisverlauf:
-                attrs["preisverlauf"] = preisverlauf
-        # Preisverlauf nicht in die Attribute anderer Sensoren mischen
-        attrs.pop("preisverlauf", None)
-
         if self._sensor_key in self.ENERGY_KEYS:
             attrs["device_class"] = "energy"
             attrs["state_class"] = "total_increasing"
@@ -340,7 +332,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         for key in list(device_data.keys()):
             if key in ("device_id", "source") or key.endswith("_unit"):
                 continue
-            if is_vision and key in ("timestamp", "plz", "stunden_block", "preisverlauf"):
+            if is_vision and key in ("timestamp", "plz", "stunden_block"):
                 continue
             if not is_vision and (key == "timestamp" or key.endswith("_timestamp")):
                 continue

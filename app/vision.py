@@ -195,16 +195,6 @@ def run() -> bool:
     guenstigste_zeit = start["timestamp_str"] if start else None
     guenstigste_summe = round(avg, 5) if avg and avg != float("inf") else None
 
-    # Preisverlauf: alle zukünftigen + aktuellen Preise für die Visualisierung
-    now = datetime.now().astimezone()
-    preisverlauf = []
-    for eintrag in preise:
-        if eintrag["timestamp"] >= now - timedelta(minutes=INTERVALL_MIN):
-            preisverlauf.append({
-                "start": eintrag["timestamp_str"],
-                "preis": round(eintrag["price"], 5),
-            })
-
     result = {
         "device_id": "vision_strom",
         "timestamp": datetime.now().isoformat(),
@@ -212,7 +202,6 @@ def run() -> bool:
         "guenstigste_startzeit": guenstigste_zeit,
         "guenstigste_summe": guenstigste_summe,
         "stunden_block": stunden,
-        "preisverlauf": preisverlauf,
     }
 
     try:
