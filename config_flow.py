@@ -96,14 +96,11 @@ class IonaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry):
         """Options Flow Handler für Rekonfiguration."""
-        return IonaOptionsFlowHandler(config_entry)
+        return IonaOptionsFlowHandler()
 
 
 class IonaOptionsFlowHandler(config_entries.OptionsFlow):
     """Options Flow für iona-ha (Rekonfiguration)."""
-
-    def __init__(self, config_entry):
-        self.config_entry = config_entry
 
     async def async_step_init(self, user_input=None):
         """Options-Formular anzeigen."""
