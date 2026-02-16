@@ -1,0 +1,49 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "iona-ha Configuration",
+        "description": "Enter your iONA credentials to set up the integration.",
+        "data": {
+          "IONA_BOX": "iONA Box IP Address",
+          "USERNAME": "Username (Email)",
+          "PASSWORD": "Password",
+          "vision_tariff": "Enable mein Strom Vision",
+          "vision_tools": "Enable Vision Tools"
+        },
+        "data_description": {
+          "IONA_BOX": "The local IP address of your iONA Box (e.g. 192.168.1.100)",
+          "USERNAME": "Your email address for the iONA App",
+          "PASSWORD": "Your password for the iONA App",
+          "vision_tariff": "Enable this option if you use the dynamic tariff 'mein Strom Vision' from enviaM",
+          "vision_tools": "Optimization tools: cheapest start time, average price and configurable sliders"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "iona-ha is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "iona-ha Options",
+        "description": "Adjust your iONA credentials and settings.",
+        "data": {
+          "IONA_BOX": "iONA Box IP Address",
+          "USERNAME": "Username (Email)",
+          "PASSWORD": "Password",
+          "vision_tariff": "Enable mein Strom Vision",
+          "vision_tools": "Enable Vision Tools"
+        },
+        "data_description": {
+          "IONA_BOX": "The local IP address of your iONA Box",
+          "USERNAME": "Your email address for the iONA App",
+          "PASSWORD": "Your password for the iONA App",
+          "vision_tariff": "Enable dynamic tariff",
+          "vision_tools": "Enable optimization tools"
+        }
+      }
+    }
+  }
+}
