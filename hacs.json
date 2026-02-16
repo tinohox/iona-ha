@@ -2,6 +2,7 @@
   "name": "iona-ha",
   "content_in_root": true,
   "domains": ["sensor", "number", "switch"],
+  "homeassistant": "2023.1.0",
   "country": "DE",
   "iot_class": "local_polling",
   "render_readme": true
