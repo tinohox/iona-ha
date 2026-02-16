@@ -11,6 +11,29 @@
 
 Deine **iONA Box** liefert Energiedaten direkt an **Home Assistant** – mit Live-Verbrauchswerten, Zählerständen und voller Integration ins Energie-Dashboard.
 
+---
+
+## English (quick)
+
+This custom Home Assistant integration connects your **iONA box** to Home Assistant and provides live power and energy meter sensors.
+
+**Requirements**
+
+- Home Assistant 2023.1.0+
+- HACS installed
+- iONA box reachable in your LAN (static IP recommended)
+- iONA app credentials (email + password)
+
+**Install via HACS (Custom Repository)**
+
+1. Open HACS → Integrations → (⋮) → Custom repositories
+2. Add `https://github.com/tinohox/iona-ha` as category **Integration**
+3. Download **iona-ha**
+4. Restart Home Assistant
+5. Settings → Devices & Services → Add integration → search for **iona-ha**
+
+---
+
 > **📢 Coming Soon: mein Strom Vision**
 >
 > Unterstützung für den **dynamischen Stromtarif „mein Strom Vision"** von enviaM wird in einem kommenden Update verfügbar sein. Damit werden Spotpreis-Daten und smarte Optimierungswerkzeuge direkt in Home Assistant nutzbar – ideal für alle, die ihren Stromverbrauch automatisiert an günstige Stundenpreise anpassen möchten.

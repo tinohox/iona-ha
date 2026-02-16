@@ -3,6 +3,7 @@
   "name": "iona-ha",
   "version": "2.0.0",
   "documentation": "https://github.com/tinohox/iona-ha",
+  "integration_type": "hub",
   "dependencies": [],
   "codeowners": ["@tinoHoX"],
   "config_flow": true,
