@@ -11,4 +11,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare custom_components structure
+        run: |
+          mkdir -p custom_components/iona
+          # Copy all integration files (content_in_root)
+          for f in *.py manifest.json strings.json; do
+            [ -f "$f" ] && cp "$f" custom_components/iona/
+          done
+          cp -r translations custom_components/iona/ 2>/dev/null || true
+          cp -r app custom_components/iona/ 2>/dev/null || true
       - uses: home-assistant/actions/hassfest@master
