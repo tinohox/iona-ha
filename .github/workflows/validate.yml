@@ -17,3 +17,5 @@ jobs:
         uses: hacs/action@main
         with:
           category: integration
+          # Remove 'brands topics' ignore BEFORE submitting to hacs/default
+          ignore: brands topics

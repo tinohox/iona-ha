@@ -20,4 +20,6 @@ jobs:
           done
           cp -r translations custom_components/iona/ 2>/dev/null || true
           cp -r app custom_components/iona/ 2>/dev/null || true
+          # Remove root manifest so hassfest only scans custom_components/
+          rm -f manifest.json
       - uses: home-assistant/actions/hassfest@master
