@@ -5,6 +5,7 @@ Schreibt in meter_db.json.
 """
 
 import os
+import json
 import logging
 import requests
 from tinydb import TinyDB, Query
@@ -71,6 +72,14 @@ def run() -> bool:
     # In TinyDB schreiben
     os.makedirs(DATA_DIR, exist_ok=True)
     Device = Query()
+
+    if os.path.isfile(DB_PATH):
+        try:
+            with open(DB_PATH, "r", encoding="utf-8") as f:
+                json.load(f)
+        except (json.JSONDecodeError, ValueError):
+            _LOGGER.warning("meter_db.json ist beschädigt – wird neu erstellt")
+            os.remove(DB_PATH)
 
     with TinyDB(DB_PATH) as db:
         result = db.search(Device.device_id == "Stromzaehler")
