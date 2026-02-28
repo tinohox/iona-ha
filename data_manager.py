@@ -10,6 +10,7 @@ im HA Executor Thread-Pool (kein Blocking im Event-Loop).
 
 import os
 import logging
+import threading
 from datetime import datetime, timedelta
 
 from homeassistant.core import HomeAssistant
@@ -47,6 +48,7 @@ class IonaDataManager:
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
         self._cancel_callbacks: list = []
+        self._meter_db_lock = threading.Lock()
 
     # ------------------------------------------------------------------ #
     #  Lifecycle                                                          #
@@ -188,7 +190,13 @@ class IonaDataManager:
             return
         _LOGGER.info("Starte: get_lan_data")
         from .app.get_lan_data import run as _run
-        ok = await self.hass.async_add_executor_job(_run)
+        lock = self._meter_db_lock
+
+        def _locked_run():
+            with lock:
+                return _run()
+
+        ok = await self.hass.async_add_executor_job(_locked_run)
         _LOGGER.info("Fertig: get_lan_data → %s", "OK" if ok else "FEHLER")
 
     async def _task_web_data(self) -> None:
@@ -205,7 +213,13 @@ class IonaDataManager:
             return
         _LOGGER.info("Starte: get_web_data (LAN liefert nicht, Fallback)")
         from .app.get_web_data import run as _run
-        ok = await self.hass.async_add_executor_job(_run)
+        lock = self._meter_db_lock
+
+        def _locked_run():
+            with lock:
+                return _run()
+
+        ok = await self.hass.async_add_executor_job(_locked_run)
         _LOGGER.info("Fertig: get_web_data → %s", "OK" if ok else "FEHLER")
 
     async def _task_spot_prices(self) -> None:

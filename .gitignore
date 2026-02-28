@@ -1,5 +1,7 @@
 # iona-ha – .gitignore
 
+CLAUDE.md
+
 # Umgebungsdateien (Zugangsdaten)
 *.env
 app/env/
