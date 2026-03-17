@@ -245,6 +245,12 @@ MIT License – siehe [LICENSE](LICENSE)
 
 ---
 
+## IMPRESSUM
+
+[IMPRESSUM](https://tinohox.de/impressum/)
+
+---
+
 <p align="center">
   <a href="https://github.com/tinohox/iona-ha/issues">Fehler melden & Feature-Wünsche</a> ·
   <a href="https://www.enviam.de/bestellung-iona">iONA Box bestellen</a> ·
