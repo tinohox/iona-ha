@@ -164,16 +164,17 @@ class IonaOptionsFlowHandler(config_entries.OptionsFlow):
         n2g_env = await self.hass.async_add_executor_job(read_env_file, SECRETS_ENV)
         account_env = await self.hass.async_add_executor_job(read_env_file, ACCOUNT_ENV)
 
-        # Aktuelle Intervalle aus ConfigEntry oder Defaults
-        current_lan = self.config_entry.data.get(CONF_INTERVAL_LAN, INTERVAL_LAN_DATA)
-        current_web = self.config_entry.data.get(CONF_INTERVAL_WEB, INTERVAL_WEB_DATA)
+        # Aktuelle Werte aus ConfigEntry (dort liegen Credentials seit v2.0.5)
+        entry_data = self.config_entry.data
+        current_lan = entry_data.get(CONF_INTERVAL_LAN, INTERVAL_LAN_DATA)
+        current_web = entry_data.get(CONF_INTERVAL_WEB, INTERVAL_WEB_DATA)
 
         data_schema = vol.Schema(
             {
                 vol.Required(CONF_IONA_BOX, default=n2g_env.get(CONF_IONA_BOX, "")): str,
-                vol.Required(CONF_USERNAME, default=n2g_env.get(CONF_USERNAME, "")): str,
+                vol.Required(CONF_USERNAME, default=entry_data.get(CONF_USERNAME, "")): str,
                 vol.Required(
-                    CONF_PASSWORD, default=n2g_env.get(CONF_PASSWORD, "")
+                    CONF_PASSWORD, default=entry_data.get(CONF_PASSWORD, "")
                 ): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
                 **(
                     {
