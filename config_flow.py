@@ -11,12 +11,26 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
 )
 
-from .const import DOMAIN, CONF_IONA_BOX, CONF_USERNAME, CONF_PASSWORD, CONF_VISION_TARIFF, CONF_VISION_TOOLS
+from .const import (
+    DOMAIN,
+    CONF_IONA_BOX,
+    CONF_USERNAME,
+    CONF_PASSWORD,
+    CONF_VISION_TARIFF,
+    CONF_VISION_TOOLS,
+    CONF_INTERVAL_LAN,
+    CONF_INTERVAL_WEB,
+    INTERVAL_LAN_DATA,
+    INTERVAL_WEB_DATA,
+)
 from .env_utils import (
     read_env_file,
     write_env_file,
@@ -59,14 +73,11 @@ class IonaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             await self.hass.async_add_executor_job(
                 write_env_file, ACCOUNT_ENV, account_data
             )
+            # Nur IONA_BOX in secrets-n2g.env – Credentials bleiben im ConfigEntry
             await self.hass.async_add_executor_job(
                 write_env_file,
                 SECRETS_ENV,
-                {
-                    CONF_IONA_BOX: user_input[CONF_IONA_BOX],
-                    CONF_PASSWORD: user_input[CONF_PASSWORD],
-                    CONF_USERNAME: user_input[CONF_USERNAME],
-                },
+                {CONF_IONA_BOX: user_input[CONF_IONA_BOX]},
             )
             return self.async_create_entry(
                 title="iona-ha", data=user_input
@@ -138,14 +149,11 @@ class IonaOptionsFlowHandler(config_entries.OptionsFlow):
             await self.hass.async_add_executor_job(
                 write_env_file, ACCOUNT_ENV, account_data
             )
+            # Nur IONA_BOX in secrets-n2g.env – Credentials bleiben im ConfigEntry
             await self.hass.async_add_executor_job(
                 write_env_file,
                 SECRETS_ENV,
-                {
-                    CONF_IONA_BOX: user_input[CONF_IONA_BOX],
-                    CONF_PASSWORD: user_input[CONF_PASSWORD],
-                    CONF_USERNAME: user_input[CONF_USERNAME],
-                },
+                {CONF_IONA_BOX: user_input[CONF_IONA_BOX]},
             )
             # Credentials auch im ConfigEntry aktualisieren
             self.hass.config_entries.async_update_entry(
@@ -155,6 +163,10 @@ class IonaOptionsFlowHandler(config_entries.OptionsFlow):
 
         n2g_env = await self.hass.async_add_executor_job(read_env_file, SECRETS_ENV)
         account_env = await self.hass.async_add_executor_job(read_env_file, ACCOUNT_ENV)
+
+        # Aktuelle Intervalle aus ConfigEntry oder Defaults
+        current_lan = self.config_entry.data.get(CONF_INTERVAL_LAN, INTERVAL_LAN_DATA)
+        current_web = self.config_entry.data.get(CONF_INTERVAL_WEB, INTERVAL_WEB_DATA)
 
         data_schema = vol.Schema(
             {
@@ -176,6 +188,26 @@ class IonaOptionsFlowHandler(config_entries.OptionsFlow):
                     }
                     if _VISION_AVAILABLE
                     else {}
+                ),
+                vol.Required(
+                    CONF_INTERVAL_LAN,
+                    default=current_lan,
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=1, max=60, step=1,
+                        mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="s",
+                    )
+                ),
+                vol.Required(
+                    CONF_INTERVAL_WEB,
+                    default=current_web,
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=10, max=3600, step=10,
+                        mode=NumberSelectorMode.BOX,
+                        unit_of_measurement="s",
+                    )
                 ),
             }
         )

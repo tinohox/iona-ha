@@ -34,14 +34,18 @@
           "USERNAME": "Benutzername (E-Mail)",
           "PASSWORD": "Passwort",
           "vision_tariff": "mein Strom Vision aktivieren",
-          "vision_tools": "Vision Tools aktivieren"
+          "vision_tools": "Vision Tools aktivieren",
+          "interval_lan": "LAN-Abfrageintervall",
+          "interval_web": "Web-Abfrageintervall (Fallback)"
         },
         "data_description": {
           "IONA_BOX": "Die lokale IP-Adresse deiner iONA Box (z.B. 192.168.1.100)",
           "USERNAME": "Deine E-Mail-Adresse für die iONA App",
           "PASSWORD": "Dein Passwort für die iONA App",
           "vision_tariff": "Dynamischen Tarif aktivieren",
-          "vision_tools": "Optimierungswerkzeuge aktivieren"
+          "vision_tools": "Optimierungswerkzeuge aktivieren",
+          "interval_lan": "Wie oft die iONA Box lokal abgefragt wird (in Sekunden, Standard: 5)",
+          "interval_web": "Wie oft Web-Daten als Fallback abgerufen werden (in Sekunden, Standard: 300)"
         }
       }
     }

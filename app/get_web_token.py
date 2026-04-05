@@ -1,7 +1,8 @@
 """Web-Token von der iONA/enviaM Auth-API holen und speichern.
 
-Liest Zugangsdaten aus secrets-n2g.env, authentifiziert sich
-und speichert den erhaltenen Token in WebToken.env.
+Nutzt bevorzugt den Refresh-Token aus WebToken.env.
+Credentials (Username/Passwort) werden nur als Fallback benötigt
+und vom Aufrufer übergeben (nicht aus .env gelesen).
 """
 
 import os
@@ -45,14 +46,44 @@ def _save_token(token_data: dict) -> None:
     _LOGGER.debug("Web-Token gespeichert in %s", filepath)
 
 
-def run() -> bool:
-    """Hole einen neuen Web-Token. Gibt True bei Erfolg zurück."""
-    secrets = _read_env("secrets-n2g.env")
-    username = secrets.get("USERNAME")
-    password = secrets.get("PASSWORD")
+def refresh() -> bool:
+    """Erneuere den Access-Token mit dem gespeicherten Refresh-Token."""
+    web_env = _read_env("WebToken.env")
+    refresh_token = web_env.get("REFRESH_TOKEN")
+
+    if not refresh_token:
+        _LOGGER.warning("Kein REFRESH_TOKEN in WebToken.env vorhanden")
+        return False
+
+    data = {"method": "refresh", "refresh_token": refresh_token}
+    headers = {"Content-Type": "application/json"}
+
+    try:
+        response = requests.post(
+            AUTH_URL, headers=headers, json=data, verify=False, timeout=15
+        )
+        response.raise_for_status()
+        token_data = response.json()
+        _save_token(token_data)
+        _LOGGER.info("Token erfolgreich per Refresh erneuert")
+        return True
+    except requests.RequestException as err:
+        _LOGGER.warning("Refresh fehlgeschlagen: %s – versuche Login", err)
+        return False
+
+
+def run(username: str = "", password: str = "", use_refresh: bool = True) -> bool:
+    """Hole einen neuen Web-Token.
+
+    Versucht zuerst den Refresh-Token, fällt bei Fehler auf Login zurück.
+    Credentials werden als Parameter übergeben (aus HA ConfigEntry).
+    Mit use_refresh=False wird direkt per Login authentifiziert.
+    """
+    if use_refresh and refresh():
+        return True
 
     if not username or not password:
-        _LOGGER.error("USERNAME/PASSWORD nicht in secrets-n2g.env gesetzt")
+        _LOGGER.error("Refresh fehlgeschlagen und keine Credentials vorhanden")
         return False
 
     data = {"method": "login", "username": username, "password": password}
@@ -65,7 +96,7 @@ def run() -> bool:
         response.raise_for_status()
         token_data = response.json()
         _save_token(token_data)
-        _LOGGER.info("Neuer Web-Token erfolgreich gespeichert")
+        _LOGGER.info("Neuer Web-Token erfolgreich per Login gespeichert")
         return True
     except requests.RequestException as err:
         _LOGGER.error("Fehler beim Web-Token-Abruf: %s", err)
