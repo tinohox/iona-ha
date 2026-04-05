@@ -44,10 +44,11 @@ This custom Home Assistant integration connects your **iONA box** to Home Assist
 
 | | Feature |
 |---|---|
-| ⚡ | **Live-Verbrauch** – Momentanleistung (Watt) alle 5 Sekunden direkt von der iONA Box |
+| ⚡ | **Live-Verbrauch** – Momentanleistung (Watt) direkt von der iONA Box (Standard: alle 5 Sekunden, einstellbar) |
 | 📊 | **Zählerstand** – Gesamtverbrauch & Einspeisung (kWh), kompatibel mit dem HA Energie-Dashboard |
 | 🔄 | **Dual-Datenquelle** – Primär lokal via LAN, automatischer Web-Fallback bei Verbindungsproblemen |
-| 🛡️ | **HACS-Update-sicher** – Zugangsdaten werden automatisch gesichert und nach Updates wiederhergestellt |
+| 🛡️ | **HACS-Update-sicher** – Einstellungen und Tokens werden automatisch gesichert und nach Updates wiederhergestellt |
+| 🔔 | **Automatische Benachrichtigungen** – Hinweis in der HA-Oberfläche bei Authentifizierungsproblemen oder nicht erreichbarer iONA Box |
 | ⚙️ | **Einfache Einrichtung** – Konfiguration komplett über die Home Assistant UI |
 
 ---
@@ -91,11 +92,20 @@ Anschließend Home Assistant neu starten und über die UI konfigurieren.
 
 Die komplette Einrichtung erfolgt über die **Home Assistant UI** – es müssen keine YAML-Dateien bearbeitet werden.
 
+### Ersteinrichtung
+
 | Parameter | Beschreibung | Beispiel |
-|-----------|-------------|---------|
+|-----------|-------------|--------|
 | **iONA Box IP** | Lokale IP-Adresse der iONA Box | `192.168.1.100` |
 | **Benutzername** | E-Mail der iONA App | `max@example.com` |
 | **Passwort** | Passwort der iONA App | `••••••••` |
+
+### Erweiterte Optionen (unter Optionen)
+
+| Parameter | Beschreibung | Standard |
+|-----------|-------------|----------|
+| **LAN-Abfrageintervall** | Wie oft die iONA Box lokal abgefragt wird | `5` Sekunden |
+| **Web-Abfrageintervall** | Wie oft Web-Daten als Fallback abgerufen werden | `300` Sekunden |
 
 > 💡 **Tipp:** Alle Einstellungen lassen sich nachträglich unter **Einstellungen → Geräte & Dienste → iona-ha → Optionen** ändern. Änderungen werden sofort übernommen – kein Neustart nötig.
 
@@ -120,8 +130,8 @@ Der Sensor **„Stromzähler Datenquelle"** zeigt an, über welchen Weg die Zäh
 
 | Wert | Icon | Bedeutung |
 |------|------|-----------|
-| **LAN** | 🖧 `mdi:lan` | Daten kommen **direkt von der iONA Box** im lokalen Netzwerk (alle 5 Sekunden) |
-| **WEB** | ☁️ `mdi:cloud` | Daten werden über die **enviaM Web-API** bezogen (Fallback, alle 5 Minuten) |
+| **LAN** | 🖧 `mdi:lan` | Daten kommen **direkt von der iONA Box** im lokalen Netzwerk (Standard: alle 5 Sekunden) |
+| **WEB** | ☁️ `mdi:cloud` | Daten werden über die **enviaM Web-API** bezogen (Fallback, Standard: alle 5 Minuten) |
 
 **So funktioniert die automatische Umschaltung:**
 
@@ -147,18 +157,22 @@ Die Sensoren liefern `device_class: energy` und `state_class: total_increasing` 
 
 ## Update-sicheres Backup
 
-Bei einem **HACS-Update** wird der gesamte Integrationsordner überschrieben. Damit deine Zugangsdaten dabei nicht verloren gehen, sichert die Integration alle `.env`-Dateien automatisch an einem geschützten Ort:
+Bei einem **HACS-Update** wird der gesamte Integrationsordner überschrieben. Damit Einstellungen und Tokens dabei nicht verloren gehen, sichert die Integration alle `.env`-Dateien automatisch an einem geschützten Ort:
 
 ```
 .storage/iona_env_backup/     ← HACS-sicher, wird bei Updates nicht gelöscht
 ```
 
 **Nach einem Update:**
-1. Die Integration erkennt automatisch, dass die Zugangsdaten fehlen
+1. Die Integration erkennt automatisch, dass die Konfigurationsdateien fehlen
 2. Sie werden aus dem Backup wiederhergestellt
 3. Die Integration läuft nahtlos weiter – ohne erneute Eingabe
 
 > Du musst nichts tun – das Backup funktioniert vollautomatisch im Hintergrund.
+
+### Sicherheit: Zugangsdaten
+
+Deine **Zugangsdaten (E-Mail & Passwort)** werden ausschließlich im **verschlüsselten Home Assistant ConfigEntry** gespeichert – nicht als Klartext in Dateien. Im Normalbetrieb wird ein **Refresh-Token** zur Authentifizierung genutzt. Nur wenn dieser abläuft, greift die Integration automatisch auf die gespeicherten Zugangsdaten zurück.
 
 ---
 
@@ -185,9 +199,22 @@ Bei einem **HACS-Update** wird der gesamte Integrationsordner überschrieben. Da
 <details>
 <summary><b>Token-Fehler (401 / Authentifizierung fehlgeschlagen)</b></summary>
 
+- Die Integration nutzt bevorzugt einen **Refresh-Token** – ein einzelner 401-Fehler wird automatisch behoben
+- Bei dauerhaftem Fehlschlag erscheint automatisch eine **Benachrichtigung** in der HA-Oberfläche
 - Zugangsdaten in den Optionen prüfen – stimmen E-Mail und Passwort?
 - Testweise in der iONA App oder Webapp einloggen
 - Die enviaM-API kann zeitweise nicht erreichbar sein – einfach 5–10 Minuten warten
+
+</details>
+
+<details>
+<summary><b>Benachrichtigung: iONA Box nicht erreichbar</b></summary>
+
+- Die Integration zeigt eine **Benachrichtigung** an, wenn die iONA Box wiederholt nicht erreichbar ist
+- **IP-Adresse korrekt?** Unter Einstellungen → Geräte & Dienste → iona-ha → Optionen prüfen
+- **Box eingeschaltet?** Prüfe, ob die LED an der iONA Box leuchtet
+- **Netzwerk?** Die Box muss im selben Netzwerk wie Home Assistant sein
+- Die Benachrichtigung verschwindet **automatisch**, sobald die Box wieder erreichbar ist
 
 </details>
 

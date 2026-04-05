@@ -34,14 +34,18 @@
           "USERNAME": "Username (Email)",
           "PASSWORD": "Password",
           "vision_tariff": "Enable mein Strom Vision",
-          "vision_tools": "Enable Vision Tools"
+          "vision_tools": "Enable Vision Tools",
+          "interval_lan": "LAN polling interval",
+          "interval_web": "Web polling interval (fallback)"
         },
         "data_description": {
           "IONA_BOX": "The local IP address of your iONA Box",
           "USERNAME": "Your email address for the iONA App",
           "PASSWORD": "Your password for the iONA App",
           "vision_tariff": "Enable dynamic tariff",
-          "vision_tools": "Enable optimization tools"
+          "vision_tools": "Enable optimization tools",
+          "interval_lan": "How often the iONA Box is polled locally (in seconds, default: 5)",
+          "interval_web": "How often web data is fetched as fallback (in seconds, default: 300)"
         }
       }
     }

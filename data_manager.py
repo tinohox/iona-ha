@@ -15,6 +15,10 @@ from datetime import datetime, timedelta
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.components.persistent_notification import (
+    async_create as pn_create,
+    async_dismiss as pn_dismiss,
+)
 
 from .const import (
     INTERVAL_LAN_DATA,
@@ -29,6 +33,11 @@ from .const import (
     FRESHNESS_TARIFF,
     FRESHNESS_VISION,
     FRESHNESS_METER,
+    DOMAIN,
+    CONF_USERNAME,
+    CONF_PASSWORD,
+    CONF_INTERVAL_LAN,
+    CONF_INTERVAL_WEB,
 )
 from .env_utils import env_file_exists, is_vision_enabled, WEB_TOKEN_ENV, LAN_TOKEN_ENV
 
@@ -36,6 +45,13 @@ _LOGGER = logging.getLogger(__name__)
 
 _SCRIPT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app")
 _DATA_DIR = os.path.join(_SCRIPT_DIR, "data")
+
+# Notification IDs
+_NOTIFY_AUTH_FAILED = "iona_auth_failed"
+_NOTIFY_BOX_UNREACHABLE = "iona_box_unreachable"
+
+# Anzahl aufeinanderfolgender Fehler bevor eine Notification erscheint
+_FAIL_THRESHOLD = 3
 
 
 class IonaDataManager:
@@ -49,6 +65,8 @@ class IonaDataManager:
         self.hass = hass
         self._cancel_callbacks: list = []
         self._meter_db_lock = threading.Lock()
+        self._auth_fail_count: int = 0
+        self._lan_fail_count: int = 0
 
     # ------------------------------------------------------------------ #
     #  Lifecycle                                                          #
@@ -70,10 +88,20 @@ class IonaDataManager:
             _LOGGER.exception("Fehler bei der initialen Datenabfrage – Integration startet trotzdem")
 
         # Periodische Tasks registrieren
+        # LAN/Web-Intervalle aus ConfigEntry (oder Defaults)
+        entries = self.hass.config_entries.async_entries(DOMAIN)
+        if entries:
+            entry = entries[0]
+            lan_interval = int(entry.data.get(CONF_INTERVAL_LAN, INTERVAL_LAN_DATA))
+            web_interval = int(entry.data.get(CONF_INTERVAL_WEB, INTERVAL_WEB_DATA))
+        else:
+            lan_interval = INTERVAL_LAN_DATA
+            web_interval = INTERVAL_WEB_DATA
+
         self._schedule(self._task_web_token, INTERVAL_WEB_TOKEN)
         self._schedule(self._task_lan_token, INTERVAL_LAN_TOKEN)
-        self._schedule(self._task_lan_data, INTERVAL_LAN_DATA)
-        self._schedule(self._task_web_data, INTERVAL_WEB_DATA)
+        self._schedule(self._task_lan_data, lan_interval)
+        self._schedule(self._task_web_data, web_interval)
         self._schedule(self._task_spot_prices, INTERVAL_SPOT_PRICES)
         self._schedule(self._task_tariff_data, INTERVAL_TARIFF_DATA)
         self._schedule(self._task_calc_preise, INTERVAL_CALC_PREISE)
@@ -167,10 +195,41 @@ class IonaDataManager:
     # ------------------------------------------------------------------ #
 
     async def _task_web_token(self) -> None:
-        """Web-Token erneuern."""
+        """Web-Token erneuern (Refresh bevorzugt, Login als Fallback)."""
         _LOGGER.info("Starte: get_web_token")
         from .app.get_web_token import run as _run
-        ok = await self.hass.async_add_executor_job(_run)
+
+        # Credentials aus ConfigEntry holen (nicht aus .env)
+        username = ""
+        password = ""
+        entries = self.hass.config_entries.async_entries(DOMAIN)
+        if entries:
+            entry = entries[0]
+            username = entry.data.get(CONF_USERNAME, "")
+            password = entry.data.get(CONF_PASSWORD, "")
+
+        ok = await self.hass.async_add_executor_job(
+            _run, username, password
+        )
+
+        if ok:
+            if self._auth_fail_count >= _FAIL_THRESHOLD:
+                pn_dismiss(self.hass, _NOTIFY_AUTH_FAILED)
+            self._auth_fail_count = 0
+        else:
+            self._auth_fail_count += 1
+            if self._auth_fail_count >= _FAIL_THRESHOLD:
+                pn_create(
+                    self.hass,
+                    (
+                        "Die Anmeldung bei iONA/enviaM ist fehlgeschlagen. "
+                        "Bitte prüfe deine Zugangsdaten unter "
+                        "**Einstellungen → Geräte & Dienste → iona-ha → Optionen**."
+                    ),
+                    title="iONA: Authentifizierung fehlgeschlagen",
+                    notification_id=_NOTIFY_AUTH_FAILED,
+                )
+
         _LOGGER.info("Fertig: get_web_token → %s", "OK" if ok else "FEHLER")
 
     async def _task_lan_token(self) -> None:
@@ -197,6 +256,33 @@ class IonaDataManager:
                 return _run()
 
         ok = await self.hass.async_add_executor_job(_locked_run)
+
+        if ok:
+            if self._lan_fail_count >= _FAIL_THRESHOLD:
+                pn_dismiss(self.hass, _NOTIFY_BOX_UNREACHABLE)
+            self._lan_fail_count = 0
+        else:
+            self._lan_fail_count += 1
+            if self._lan_fail_count >= _FAIL_THRESHOLD:
+                # IP aus secrets-n2g.env lesen für die Meldung
+                from .env_utils import read_env_file, SECRETS_ENV
+                secrets = await self.hass.async_add_executor_job(
+                    read_env_file, SECRETS_ENV
+                )
+                ip = secrets.get("IONA_BOX", "unbekannt")
+                pn_create(
+                    self.hass,
+                    (
+                        f"Die iONA Box unter **{ip}** ist nicht erreichbar. "
+                        "Bitte prüfe, ob die Box eingeschaltet und im Netzwerk ist, "
+                        "und ob die IP-Adresse unter "
+                        "**Einstellungen → Geräte & Dienste → iona-ha → Optionen** "
+                        "korrekt ist."
+                    ),
+                    title="iONA: Box nicht erreichbar",
+                    notification_id=_NOTIFY_BOX_UNREACHABLE,
+                )
+
         _LOGGER.info("Fertig: get_lan_data → %s", "OK" if ok else "FEHLER")
 
     async def _task_web_data(self) -> None:

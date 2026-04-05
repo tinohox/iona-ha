@@ -91,67 +91,77 @@ async def _async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None
 async def _sync_credentials(
     hass: HomeAssistant, entry: ConfigEntry, *, restored: bool = False
 ) -> None:
-    """Synchronisiert Zugangsdaten zwischen ConfigEntry und .env Dateien.
+    """Synchronisiert Einstellungen zwischen ConfigEntry und .env Dateien.
 
-    - restored=True  → env wurde gerade aus Backup wiederhergestellt,
-                        ConfigEntry hat Vorrang (Backup kann veraltet sein)
-    - restored=False → env war schon vorhanden (manuell bearbeitet),
-                        env hat Vorrang über ConfigEntry
-    - env fehlt      → aus ConfigEntry wiederherstellen (z.B. nach HACS-Update)
+    secrets-n2g.env enthält nur noch IONA_BOX (keine Credentials).
+    Credentials bleiben ausschließlich im HA ConfigEntry (verschlüsselt).
+
+    Migration: Wenn secrets-n2g.env noch USERNAME/PASSWORD enthält (Update
+    von älterer Version), werden diese in den ConfigEntry übernommen und
+    anschließend aus der env-Datei entfernt.
     """
     # --- secrets-n2g.env ---
     secrets_exists = await hass.async_add_executor_job(env_file_exists, SECRETS_ENV)
     entry_box = entry.data.get(CONF_IONA_BOX, "")
-    entry_user = entry.data.get(CONF_USERNAME, "")
-    entry_pass = entry.data.get(CONF_PASSWORD, "")
 
-    if secrets_exists and restored and entry_box and entry_user and entry_pass:
-        # Nach Backup-Restore: ConfigEntry ist die aktuelle Wahrheit
-        await hass.async_add_executor_job(
-            write_env_file,
-            SECRETS_ENV,
-            {
-                CONF_IONA_BOX: entry_box,
-                CONF_USERNAME: entry_user,
-                CONF_PASSWORD: entry_pass,
-            },
-        )
-        _LOGGER.info(
-            "secrets-n2g.env aus ConfigEntry aktualisiert nach Restore (IP: %s)",
-            entry_box,
-        )
-    elif secrets_exists and not restored:
-        # env war schon da → ConfigEntry aktualisieren falls abweichend
+    if secrets_exists:
         secrets_data = await hass.async_add_executor_job(read_env_file, SECRETS_ENV)
-        env_box = secrets_data.get(CONF_IONA_BOX, "")
+
+        # Migration: Credentials aus alter env-Datei in ConfigEntry übernehmen
         env_user = secrets_data.get(CONF_USERNAME, "")
         env_pass = secrets_data.get(CONF_PASSWORD, "")
-        if (
-            env_box and env_user and env_pass
-            and (
-                env_box != entry_box
-                or env_user != entry_user
-                or env_pass != entry_pass
+        if env_user and env_pass:
+            entry_user = entry.data.get(CONF_USERNAME, "")
+            entry_pass = entry.data.get(CONF_PASSWORD, "")
+            if env_user != entry_user or env_pass != entry_pass:
+                new_data = dict(entry.data)
+                new_data[CONF_USERNAME] = env_user
+                new_data[CONF_PASSWORD] = env_pass
+                hass.config_entries.async_update_entry(entry, data=new_data)
+                _LOGGER.info(
+                    "Migration: Credentials aus secrets-n2g.env in ConfigEntry übernommen"
+                )
+
+            # env-Datei bereinigen: nur noch IONA_BOX behalten
+            env_box = secrets_data.get(CONF_IONA_BOX, entry_box)
+            await hass.async_add_executor_job(
+                write_env_file,
+                SECRETS_ENV,
+                {CONF_IONA_BOX: env_box},
             )
-        ):
-            new_data = dict(entry.data)
-            new_data[CONF_IONA_BOX] = env_box
-            new_data[CONF_USERNAME] = env_user
-            new_data[CONF_PASSWORD] = env_pass
-            hass.config_entries.async_update_entry(entry, data=new_data)
-            _LOGGER.info("ConfigEntry aus secrets-n2g.env aktualisiert (IP: %s)", env_box)
-    elif not secrets_exists and entry_box and entry_user and entry_pass:
-        # env fehlt → aus ConfigEntry wiederherstellen
+            _LOGGER.info(
+                "Migration: USERNAME/PASSWORD aus secrets-n2g.env entfernt"
+            )
+        elif restored and entry_box:
+            # Nach Backup-Restore: ConfigEntry hat Vorrang
+            await hass.async_add_executor_job(
+                write_env_file,
+                SECRETS_ENV,
+                {CONF_IONA_BOX: entry_box},
+            )
+            _LOGGER.info(
+                "secrets-n2g.env aus ConfigEntry aktualisiert nach Restore (IP: %s)",
+                entry_box,
+            )
+        elif not restored:
+            # env war schon da → IONA_BOX in ConfigEntry aktualisieren falls abweichend
+            env_box = secrets_data.get(CONF_IONA_BOX, "")
+            if env_box and env_box != entry_box:
+                new_data = dict(entry.data)
+                new_data[CONF_IONA_BOX] = env_box
+                hass.config_entries.async_update_entry(entry, data=new_data)
+                _LOGGER.info(
+                    "ConfigEntry IONA_BOX aus secrets-n2g.env aktualisiert (IP: %s)",
+                    env_box,
+                )
+    elif not secrets_exists and entry_box:
+        # env fehlt → IONA_BOX aus ConfigEntry wiederherstellen
         await hass.async_add_executor_job(
             write_env_file,
             SECRETS_ENV,
-            {
-                CONF_IONA_BOX: entry_box,
-                CONF_USERNAME: entry_user,
-                CONF_PASSWORD: entry_pass,
-            },
+            {CONF_IONA_BOX: entry_box},
         )
-        _LOGGER.info("Zugangsdaten aus ConfigEntry wiederhergestellt")
+        _LOGGER.info("IONA_BOX aus ConfigEntry wiederhergestellt")
 
     # --- account.env ---
     account_exists = await hass.async_add_executor_job(env_file_exists, ACCOUNT_ENV)
