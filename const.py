@@ -28,3 +28,7 @@ FRESHNESS_SPOT_PRICES = 25       # Spotpreise: 25 Minuten
 FRESHNESS_TARIFF = 1380          # Tarif: 23 Stunden
 FRESHNESS_VISION = 4             # Vision: 4 Minuten
 FRESHNESS_METER = 1              # Meter-Daten: 1 Minute (für Web-Fallback)
+
+# Lovelace Custom Cards
+LOVELACE_CARD_URL = "/iona_cards/iona-card.js"
+LOVELACE_VISION_CARD_URL = "/iona_cards/iona-vision-card.js"

@@ -1,7 +1,7 @@
 # iONA für Home Assistant
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://hacs.xyz)
-[![Version](https://img.shields.io/badge/Version-2.0.5-blue.svg?style=for-the-badge)](https://github.com/tinohox/iona-ha/releases)
+[![Version](https://img.shields.io/badge/Version-2.0.7-blue.svg?style=for-the-badge)](https://github.com/tinohox/iona-ha/releases)
 [![Lizenz](https://img.shields.io/badge/Lizenz-MIT-green.svg?style=for-the-badge)](https://github.com/tinohox/iona-ha/blob/main/LICENSE)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2023.1+-blue.svg?style=for-the-badge&logo=homeassistant)](https://www.home-assistant.io/)
 
@@ -34,10 +34,6 @@ This custom Home Assistant integration connects your **iONA box** to Home Assist
 
 ---
 
-> **📢 Coming Soon: mein Strom Vision**
->
-> Unterstützung für den **dynamischen Stromtarif „mein Strom Vision"** von enviaM wird in einem kommenden Update verfügbar sein. Damit werden Spotpreis-Daten und smarte Optimierungswerkzeuge direkt in Home Assistant nutzbar – ideal für alle, die ihren Stromverbrauch automatisiert an günstige Stundenpreise anpassen möchten.
-
 ---
 
 ## Auf einen Blick
@@ -47,6 +43,7 @@ This custom Home Assistant integration connects your **iONA box** to Home Assist
 | ⚡ | **Live-Verbrauch** – Momentanleistung (Watt) direkt von der iONA Box (Standard: alle 5 Sekunden, einstellbar) |
 | 📊 | **Zählerstand** – Gesamtverbrauch & Einspeisung (kWh), kompatibel mit dem HA Energie-Dashboard |
 | 🔄 | **Dual-Datenquelle** – Primär lokal via LAN, automatischer Web-Fallback bei Verbindungsproblemen |
+| 🃏 | **Custom Lovelace Cards** – Fertige Kacheln für Verbrauch (mit 24-h-Sparkline) und Vision Tools, automatisch registriert |
 | 🛡️ | **HACS-Update-sicher** – Einstellungen und Tokens werden automatisch gesichert und nach Updates wiederhergestellt |
 | 🔔 | **Automatische Benachrichtigungen** – Hinweis in der HA-Oberfläche bei Authentifizierungsproblemen oder nicht erreichbarer iONA Box |
 | ⚙️ | **Einfache Einrichtung** – Konfiguration komplett über die Home Assistant UI |
@@ -152,6 +149,89 @@ Die Integration ist direkt mit dem **Home Assistant Energie-Dashboard** kompatib
 3. Optional: **Stromzähler Gesamteinspeisung** als Einspeise-Sensor hinzufügen
 
 Die Sensoren liefern `device_class: energy` und `state_class: total_increasing` – sie werden vom Energie-Dashboard automatisch erkannt.
+
+---
+
+## Lovelace Cards
+
+Die Integration enthält zwei fertige **Custom Lovelace Cards**, die nach einem HA-Neustart automatisch verfügbar sind – ohne manuelle Ressourcen-Einträge oder YAML-Änderungen.
+
+### iONA Power Card (`iona-card`)
+
+Zeigt Momentanleistung, heutigen Verbrauch und einen 24-Stunden-Sparkline als Kurve. Optional: aktueller Strompreis und Preis-Balkendiagramm der letzten 12 Stunden (nur mit Vision).
+
+```yaml
+type: custom:iona-card
+entity_power: sensor.stromzahler_momentanleistung
+entity_energy: sensor.stromzahler_gesamtverbrauch
+# Optional – nur wenn "mein Strom Vision" aktiv ist:
+# entity_price: sensor.stromzahler_aktueller_preis
+```
+
+> Die korrekten Entitätsnamen findest du unter **Einstellungen → Geräte & Dienste → iona-ha → Entitäten**.
+
+| Konfigurationsschlüssel | Pflicht | Beschreibung |
+|---|---|---|
+| `entity_power` | ✅ | Sensor für Momentanleistung (W) |
+| `entity_energy` | ✅ | Sensor für Gesamtverbrauch (kWh) |
+| `entity_price` | ❌ | Sensor für aktuellen Preis – nur mit Vision aktiviert |
+
+### iONA Vision Tools Card (`iona-vision-card`)
+
+Steuerungs-Kachel für die Vision-Optimierung: günstigste Startzeit (groß dargestellt), Durchschnittskosten, Zeitraum-Slider, Späteste-Startzeit-Slider und Nacht-Modus-Schalter.
+
+> ⚠️ **Nur relevant wenn Vision Tools aktiviert ist.** Ohne Vision-Zusatzmodule liefert diese Karte keine Daten.
+
+```yaml
+type: custom:iona-vision-card
+entity_startzeit: sensor.vision_tools_gunstigste_startzeit_fur_2h
+entity_kosten: sensor.vision_tools_durchschnittskosten_fur_die_2h
+entity_zeitraum: number.mein_strom_vision_tools_vision_tools_zeitraum
+entity_vorausschau: number.mein_strom_vision_tools_vision_tools_vorausschau
+entity_nacht: switch.mein_strom_vision_tools_vision_tools_nur_nachtstrom
+```
+
+> Die exakten Entitätsnamen hängen vom Gerätenamen in HA ab – im Zweifel unter **Einstellungen → Geräte & Dienste → iona-ha → Entitäten** nachsehen.
+
+| Konfigurationsschlüssel | Pflicht | Beschreibung |
+|---|---|---|
+| `entity_startzeit` | ✅ | Sensor für günstigste Startzeit |
+| `entity_kosten` | ✅ | Sensor für Durchschnittskosten |
+| `entity_zeitraum` | ✅ | Number-Entität für Zeitraum (Stunden) |
+| `entity_vorausschau` | ✅ | Number-Entität für späteste Startzeit (Vorausschau) |
+| `entity_nacht` | ❌ | Switch für Nur-Nachtstrom-Modus (20–07 Uhr) |
+
+### Karte zum Dashboard hinzufügen
+
+1. Dashboard öffnen → **Bearbeiten** (Stift-Symbol oben rechts)
+2. **Karte hinzufügen** → **YAML** wählen
+3. Obige Konfiguration einfügen und Entitätsnamen anpassen
+4. **Speichern**
+
+---
+
+## mein Strom Vision (optional)
+
+Die Integration unterstützt den dynamischen Stromtarif **mein Strom Vision** von enviaM. Diese Funktion erfordert jedoch zusätzliche Module, die **nicht im Repository enthalten** sind – sie werden separat bereitgestellt (z. B. im Rahmen des Tarifs).
+
+**Ohne Vision-Module** läuft die Integration vollständig normal mit allen Stromzähler-Sensoren. Vision-Funktionen werden automatisch übersprungen, wenn die Module fehlen.
+
+**Mit Vision-Modulen** stehen zusätzliche Sensoren und Steuerelemente zur Verfügung:
+
+| Entität | Typ | Beschreibung |
+|---|---|---|
+| Aktueller Preis | Sensor | Aktueller Spotpreis in €/kWh |
+| Günstigste Startzeit | Sensor | Startzeit des günstigsten Zeitfensters |
+| Durchschnittskosten | Sensor | Ø-Preis im günstigen Zeitfenster |
+| Zeitraum | Number | Gewünschte Nutzungsdauer (1–8 h) |
+| Späteste Startzeit | Number | Suchfenster für Optimierung (1–24 h) |
+| Nur Nachtstrom | Switch | Suche auf 20–07 Uhr einschränken |
+
+**Vision aktivieren** (falls Module vorhanden):
+1. **Einstellungen → Geräte & Dienste → iona-ha → Optionen**
+2. „mein Strom Vision aktivieren" einschalten
+3. Optional: „Vision Tools aktivieren" für die Steuerungs-Entitäten
+4. Änderungen speichern – Integration lädt automatisch neu
 
 ---
 
