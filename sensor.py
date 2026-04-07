@@ -31,6 +31,7 @@ except ImportError:
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DB_PATH = os.path.join(BASE_DIR, "app", "data", "meter_db.json")
 VISION_DB_PATH = os.path.join(BASE_DIR, "app", "data", "vision_db.json")
+SPOTPREISE_DB_PATH = os.path.join(BASE_DIR, "app", "data", "spotpreise_brutto_db.json")
 
 SCAN_INTERVAL = timedelta(seconds=INTERVAL_SENSOR_UPDATE)
 
@@ -111,7 +112,7 @@ def _read_db_generic(path: str) -> dict:
 
 
 def load_all_db_sync() -> dict:
-    """Merged meter_db.json + vision_db.json."""
+    """Merged meter_db.json + vision_db.json + Spotpreise als Attribut."""
     merged = {}
     try:
         merged.update(_read_db_generic(DB_PATH))
@@ -119,6 +120,20 @@ def load_all_db_sync() -> dict:
         pass
     try:
         merged.update(_read_db_generic(VISION_DB_PATH))
+    except Exception:
+        pass
+    # Spotpreise laden und separat ablegen (Liste, kein Device-Eintrag)
+    try:
+        spot_raw = _read_db_generic(SPOTPREISE_DB_PATH)
+        if spot_raw:
+            merged["_spot_prices"] = sorted(
+                [
+                    {"t": v["timestamp"], "p": v["price"]}
+                    for v in spot_raw.values()
+                    if isinstance(v, dict) and "timestamp" in v and "price" in v
+                ],
+                key=lambda x: x["t"],
+            )
     except Exception:
         pass
     return merged
@@ -232,6 +247,9 @@ class IonaSensor(CoordinatorEntity, Entity):
             attrs.setdefault("unit_of_measurement", "€/kWh")
         elif self._is_vision_data() and self._sensor_key == "guenstigste_startzeit":
             attrs["device_class"] = "timestamp"
+
+        if self._sensor_key == "aktueller_preis":
+            attrs["spot_prices"] = self.coordinator.data.get("_spot_prices", [])
 
         return attrs
 

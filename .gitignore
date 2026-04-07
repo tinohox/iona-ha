@@ -26,3 +26,4 @@ app/get_tariff_data.py
 
 # Logs
 *.log
+.github/copilot-instructions.md

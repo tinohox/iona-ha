@@ -8,6 +8,7 @@ import logging
 from datetime import timedelta
 
 import homeassistant.helpers.config_validation as cv
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_time_interval
@@ -20,6 +21,8 @@ from .const import (
     CONF_PASSWORD,
     CONF_VISION_TARIFF,
     CONF_VISION_TOOLS,
+    LOVELACE_CARD_URL,
+    LOVELACE_VISION_CARD_URL,
 )
 from .env_backup import restore_env_from_backup, backup_env_files
 from .env_utils import (
@@ -38,7 +41,23 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the iona component (YAML – nicht verwendet, nur Platzhalter)."""
+    import os
     hass.data.setdefault(DOMAIN, {})
+
+    # HTTP-Pfad für Custom Card einmalig registrieren
+    if not hass.data[DOMAIN].get("_cards_registered"):
+        card_file = os.path.join(os.path.dirname(__file__), "www", "iona-card.js")
+        vision_card_file = os.path.join(os.path.dirname(__file__), "www", "iona-vision-card.js")
+        paths = []
+        if os.path.isfile(card_file):
+            paths.append(StaticPathConfig("/iona_cards/iona-card.js", card_file, False))
+        if os.path.isfile(vision_card_file):
+            paths.append(StaticPathConfig("/iona_cards/iona-vision-card.js", vision_card_file, False))
+        if paths:
+            await hass.http.async_register_static_paths(paths)
+            hass.data[DOMAIN]["_cards_registered"] = True
+            _LOGGER.debug("iona: Custom Card HTTP-Pfade registriert")
+
     return True
 
 
@@ -77,6 +96,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # 6. Bei Options-Änderung Integration neu laden
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
+
+    # 7. Lovelace-Ressourcen für Custom Cards automatisch eintragen
+    await _async_ensure_lovelace_resource(hass, entry, LOVELACE_CARD_URL)
+    await _async_ensure_lovelace_resource(hass, entry, LOVELACE_VISION_CARD_URL)
 
     _LOGGER.info("iona-ha Integration erfolgreich eingerichtet")
     return True
@@ -191,6 +214,48 @@ async def _sync_credentials(
             },
         )
         _LOGGER.info("Account-Einstellungen aus ConfigEntry wiederhergestellt")
+
+
+async def _async_ensure_lovelace_resource(
+    hass: HomeAssistant, entry: ConfigEntry, url: str
+) -> None:
+    """Trägt die Custom Card als Lovelace-Ressource ein, falls noch nicht vorhanden.
+
+    Nutzt die interne HA Lovelace Storage-API. Falls diese nicht verfügbar ist,
+    wird eine persistente Benachrichtigung mit manueller Anleitung angezeigt
+    (einmalig pro Entry).
+    """
+    try:
+        lovelace = hass.data.get("lovelace")
+        if lovelace is None:
+            raise AttributeError("lovelace nicht in hass.data")
+
+        resources = getattr(lovelace, "resources", None)
+        if resources is None:
+            raise AttributeError("lovelace.resources nicht verfügbar")
+
+        await resources.async_load()
+        existing = [r["url"] for r in resources.async_items()]
+        if url not in existing:
+            await resources.async_create_item({"res_type": "module", "url": url})
+            _LOGGER.info("iona: Lovelace-Ressource eingetragen: %s", url)
+        else:
+            _LOGGER.debug("iona: Lovelace-Ressource bereits vorhanden: %s", url)
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.debug("iona: Lovelace-API nicht verfügbar (%s) – zeige Hinweis", exc)
+        notif_key = f"{DOMAIN}_card_hint_{entry.entry_id}"
+        if not hass.data[DOMAIN].get(notif_key):
+            hass.data[DOMAIN][notif_key] = True
+            hass.components.persistent_notification.async_create(
+                title="iONA – Custom Card einrichten",
+                message=(
+                    "Die iONA Lovelace Card konnte nicht automatisch registriert werden.\n\n"
+                    "Bitte manuell eintragen:\n"
+                    "**Einstellungen → Dashboards → Ressourcen → Hinzufügen**\n\n"
+                    f"URL: `{url}`  |  Typ: JavaScript-Modul"
+                ),
+                notification_id=notif_key,
+            )
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
