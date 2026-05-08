@@ -1,7 +1,7 @@
 # iONA für Home Assistant
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://hacs.xyz)
-[![Version](https://img.shields.io/badge/Version-2.0.7-blue.svg?style=for-the-badge)](https://github.com/tinohox/iona-ha/releases)
+[![Version](https://img.shields.io/badge/Version-2.0.8-blue.svg?style=for-the-badge)](https://github.com/tinohox/iona-ha/releases)
 [![Lizenz](https://img.shields.io/badge/Lizenz-MIT-green.svg?style=for-the-badge)](https://github.com/tinohox/iona-ha/blob/main/LICENSE)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2023.1+-blue.svg?style=for-the-badge&logo=homeassistant)](https://www.home-assistant.io/)
 
@@ -45,7 +45,7 @@ This custom Home Assistant integration connects your **iONA box** to Home Assist
 | 🔄 | **Dual-Datenquelle** – Primär lokal via LAN, automatischer Web-Fallback bei Verbindungsproblemen |
 | 🃏 | **Custom Lovelace Cards** – Fertige Kacheln für Verbrauch (mit 24-h-Sparkline) und Vision Tools, automatisch registriert |
 | 🛡️ | **HACS-Update-sicher** – Einstellungen und Tokens werden automatisch gesichert und nach Updates wiederhergestellt |
-| 🔔 | **Automatische Benachrichtigungen** – Hinweis in der HA-Oberfläche bei Authentifizierungsproblemen oder nicht erreichbarer iONA Box |
+| 🔔 | **Automatische Benachrichtigungen** – Hinweis in der HA-Oberfläche bei Authentifizierungsproblemen oder nicht erreichbarer iONA Box (Edge-Trigger: nur einmal pro Ausfall, automatisches Verschwinden bei Recovery) |
 | ⚙️ | **Einfache Einrichtung** – Konfiguration komplett über die Home Assistant UI |
 
 ---

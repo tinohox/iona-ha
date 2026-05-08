@@ -50,8 +50,13 @@ _DATA_DIR = os.path.join(_SCRIPT_DIR, "data")
 _NOTIFY_AUTH_FAILED = "iona_auth_failed"
 _NOTIFY_BOX_UNREACHABLE = "iona_box_unreachable"
 
-# Anzahl aufeinanderfolgender Fehler bevor eine Notification erscheint
-_FAIL_THRESHOLD = 3
+# Anzahl aufeinanderfolgender Fehler bevor eine Notification erscheint.
+# Getrennt für LAN und Auth, weil die Abfrage-Intervalle stark variieren.
+# LAN-Intervall ist typischerweise 5 s → 6 Versuche ≈ 30 s Toleranz.
+_FAIL_THRESHOLD_LAN = 6
+# Web-Token-Intervall ist deutlich größer (Minuten) → schon 2 Fehlversuche
+# bedeuten längere Auszeit; trotzdem mind. 2, um Einzel-Glitches zu ignorieren.
+_FAIL_THRESHOLD_AUTH = 2
 
 
 class IonaDataManager:
@@ -67,6 +72,11 @@ class IonaDataManager:
         self._meter_db_lock = threading.Lock()
         self._auth_fail_count: int = 0
         self._lan_fail_count: int = 0
+        # Edge-Trigger-Flags: Notification nur einmal beim Übergang senden,
+        # damit nachgelagerte Automationen (z. B. Mail-Weiterleitung) nicht
+        # bei jedem 5-s-Tick erneut feuern.
+        self._lan_unreachable_notified: bool = False
+        self._auth_failed_notified: bool = False
 
     # ------------------------------------------------------------------ #
     #  Lifecycle                                                          #
@@ -213,12 +223,17 @@ class IonaDataManager:
         )
 
         if ok:
-            if self._auth_fail_count >= _FAIL_THRESHOLD:
+            if self._auth_failed_notified:
                 pn_dismiss(self.hass, _NOTIFY_AUTH_FAILED)
+                self._auth_failed_notified = False
             self._auth_fail_count = 0
         else:
             self._auth_fail_count += 1
-            if self._auth_fail_count >= _FAIL_THRESHOLD:
+            # Edge-Trigger: nur EINMAL beim Erreichen der Schwelle benachrichtigen.
+            if (
+                self._auth_fail_count >= _FAIL_THRESHOLD_AUTH
+                and not self._auth_failed_notified
+            ):
                 pn_create(
                     self.hass,
                     (
@@ -229,6 +244,7 @@ class IonaDataManager:
                     title="iONA: Authentifizierung fehlgeschlagen",
                     notification_id=_NOTIFY_AUTH_FAILED,
                 )
+                self._auth_failed_notified = True
 
         _LOGGER.info("Fertig: get_web_token → %s", "OK" if ok else "FEHLER")
 
@@ -258,12 +274,19 @@ class IonaDataManager:
         ok = await self.hass.async_add_executor_job(_locked_run)
 
         if ok:
-            if self._lan_fail_count >= _FAIL_THRESHOLD:
+            if self._lan_unreachable_notified:
                 pn_dismiss(self.hass, _NOTIFY_BOX_UNREACHABLE)
+                self._lan_unreachable_notified = False
             self._lan_fail_count = 0
         else:
             self._lan_fail_count += 1
-            if self._lan_fail_count >= _FAIL_THRESHOLD:
+            # Edge-Trigger: nur EINMAL beim Erreichen der Schwelle benachrichtigen,
+            # nicht bei jedem 5-s-Fehlversuch (sonst Mail-Flut bei weitergeleiteten
+            # persistent_notification-Events).
+            if (
+                self._lan_fail_count >= _FAIL_THRESHOLD_LAN
+                and not self._lan_unreachable_notified
+            ):
                 # IP aus secrets-n2g.env lesen für die Meldung
                 from .env_utils import read_env_file, SECRETS_ENV
                 secrets = await self.hass.async_add_executor_job(
@@ -282,6 +305,7 @@ class IonaDataManager:
                     title="iONA: Box nicht erreichbar",
                     notification_id=_NOTIFY_BOX_UNREACHABLE,
                 )
+                self._lan_unreachable_notified = True
 
         _LOGGER.info("Fertig: get_lan_data → %s", "OK" if ok else "FEHLER")
 
