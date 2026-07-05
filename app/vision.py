@@ -3,7 +3,7 @@
 Analysiert die Brutto-Spotpreise und berechnet:
 - Aktueller Strompreis
 - Günstigste Startzeit für einen konfigurierbaren Stunden-Block
-- Günstigste Startzeit für einen Stunden-Block in der Nachtzeit (22-06 Uhr)
+- Günstigste Startzeit für einen Stunden-Block in der Nachtzeit (20-07 Uhr)
 
 Ergebnisse werden in vision_db.json gespeichert.
 """
@@ -174,8 +174,8 @@ def _finde_guenstigste_startzeit(
 
     Der *Start* des Blocks muss innerhalb von max_vorausschau_h Stunden
     liegen.  Der Block selbst darf darüber hinausgehen.
-    Bei nur_nacht=True werden nur Nacht-Zeitfenster (22–06 Uhr) betrachtet,
-    die 12-h-Grenze gilt trotzdem für den Startpunkt.
+    Bei nur_nacht=True werden nur Nacht-Zeitfenster (20–07 Uhr) betrachtet,
+    die Vorausschau-Grenze gilt trotzdem für den Startpunkt.
     """
     anzahl = stunden * EINTRAEGE_PRO_STUNDE
     now = datetime.now().astimezone()

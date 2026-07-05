@@ -56,7 +56,7 @@ def _read_tinydb_table(path: str) -> dict:
                 entry_copy["device_id"] = device_id
                 result[device_id] = entry_copy
             return result
-    except (FileNotFoundError, json.JSONDecodeError, Exception):
+    except Exception:  # noqa: BLE001
         return {}
 
 

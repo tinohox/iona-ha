@@ -246,7 +246,11 @@ async def _async_ensure_lovelace_resource(
         notif_key = f"{DOMAIN}_card_hint_{entry.entry_id}"
         if not hass.data[DOMAIN].get(notif_key):
             hass.data[DOMAIN][notif_key] = True
-            hass.components.persistent_notification.async_create(
+            from homeassistant.components.persistent_notification import (
+                async_create as pn_create,
+            )
+            pn_create(
+                hass,
                 title="iONA – Custom Card einrichten",
                 message=(
                     "Die iONA Lovelace Card konnte nicht automatisch registriert werden.\n\n"

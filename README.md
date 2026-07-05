@@ -43,6 +43,7 @@ This custom Home Assistant integration connects your **iONA box** to Home Assist
 | ⚡ | **Live-Verbrauch** – Momentanleistung (Watt) direkt von der iONA Box (Standard: alle 5 Sekunden, einstellbar) |
 | 📊 | **Zählerstand** – Gesamtverbrauch & Einspeisung (kWh), kompatibel mit dem HA Energie-Dashboard |
 | 🔄 | **Dual-Datenquelle** – Primär lokal via LAN, automatischer Web-Fallback bei Verbindungsproblemen |
+| 💶 | **Dynamischer Stromtarif** – Optionale Unterstützung für „mein Strom Vision" von enviaM: Spotpreise in 15-Minuten-Auflösung, Brutto-Endkundenpreise und automatische Suche nach dem günstigsten Zeitfenster |
 | 🃏 | **Custom Lovelace Cards** – Fertige Kacheln für Verbrauch (mit 24-h-Sparkline) und Vision Tools, automatisch registriert |
 | 🛡️ | **HACS-Update-sicher** – Einstellungen und Tokens werden automatisch gesichert und nach Updates wiederhergestellt |
 | 🔔 | **Automatische Benachrichtigungen** – Hinweis in der HA-Oberfläche bei Authentifizierungsproblemen oder nicht erreichbarer iONA Box (Edge-Trigger: nur einmal pro Ausfall, automatisches Verschwinden bei Recovery) |
@@ -214,30 +215,77 @@ entity_nacht: switch.mein_strom_vision_tools_vision_tools_nur_nachtstrom
 
 ---
 
-## mein Strom Vision (optional)
+## mein Strom Vision – dynamischer Stromtarif (optional)
 
-Die Integration unterstützt den dynamischen Stromtarif **mein Strom Vision** von enviaM. Diese Funktion erfordert jedoch zusätzliche Module, die **nicht im Repository enthalten** sind – sie werden separat bereitgestellt (z. B. im Rahmen des Tarifs).
+Die Integration unterstützt den dynamischen Stromtarif **mein Strom Vision** von enviaM. Diese Funktion erfordert zusätzliche Module, die **nicht im Repository enthalten** sind – sie werden separat bereitgestellt (z. B. im Rahmen des Tarifs).
 
 **Ohne Vision-Module** läuft die Integration vollständig normal mit allen Stromzähler-Sensoren. Vision-Funktionen werden automatisch übersprungen, wenn die Module fehlen.
 
-**Mit Vision-Modulen** stehen zusätzliche Sensoren und Steuerelemente zur Verfügung:
+### Was ist „mein Strom Vision"?
+
+Bei einem dynamischen Tarif ist der Strompreis nicht fix, sondern folgt dem **Börsenpreis (EEX-Spotmarkt)** – in **15-Minuten-Intervallen**. Nachts, an Wochenenden oder bei viel Wind- und Sonnenstrom ist Strom oft deutlich günstiger. Wer flexible Verbraucher (E-Auto, Wärmepumpe, Waschmaschine, Spülmaschine) gezielt in günstige Zeitfenster verschiebt, spart bares Geld.
+
+Die Integration übernimmt dabei die komplette Rechenarbeit:
+
+1. **Spotpreise abrufen** – die EEX-Viertelstundenpreise werden alle 30 Minuten von der enviaM-API geladen (typisch liegen die Preise für den Folgetag ab ca. 14 Uhr vor)
+2. **Tarifdaten abrufen** – die fixen Preisbestandteile deines Vertrags (Netzentgelte, Steuern, Umlagen, Abgaben) werden täglich aktualisiert
+3. **Bruttopreis berechnen** – Spotpreis + fixe Drittkosten = dein tatsächlicher **Brutto-Endkundenpreis in €/kWh**, für jede Viertelstunde
+4. **Günstigstes Zeitfenster finden** – die Vision-Optimierung durchsucht die kommenden Stunden nach dem zusammenhängenden Zeitblock mit dem niedrigsten Durchschnittspreis
+
+### Preissensor
+
+Mit aktiviertem `vision_tariff` erscheint am Gerät **„mein Stromzähler"**:
 
 | Entität | Typ | Beschreibung |
 |---|---|---|
-| Aktueller Preis | Sensor | Aktueller Spotpreis in €/kWh |
-| Günstigste Startzeit | Sensor | Startzeit des günstigsten Zeitfensters |
-| Durchschnittskosten | Sensor | Ø-Preis im günstigen Zeitfenster |
-| Zeitraum | Number | Gewünschte Nutzungsdauer (1–8 h) |
-| Späteste Startzeit | Number | Suchfenster für Optimierung (1–24 h) |
-| danach wieder | Number | Wartezeit bis zur nächsten automatischen Suche (0–48 h, 0 = sofort) |
-| Berechnen | Button | Manuelle Neuberechnung der optimalen Startzeit auslösen |
-| Nur Nachtstrom | Switch | Suche auf 20–07 Uhr einschränken |
+| Strompreis für die aktuelle ¼h | Sensor | Aktueller Brutto-Preis in €/kWh (15-Minuten-Auflösung); das Attribut `spot_prices` enthält die komplette Preiskurve für eigene Auswertungen und Diagramme |
 
-**Vision aktivieren** (falls Module vorhanden):
+### Vision Tools – Zeitfenster-Optimierung
+
+Mit zusätzlich aktiviertem `vision_tools` erscheint das Gerät **„mein Strom Vision Tools"** mit folgenden Entitäten:
+
+| Entität | Typ | Beschreibung |
+|---|---|---|
+| Günstigste Startzeit | Sensor | Startzeit des günstigsten Zeitfensters (Timestamp – ideal für Automatisierungen) |
+| Durchschnittskosten | Sensor | Ø-Preis im gefundenen Zeitfenster in €/kWh |
+| Zeitraum | Number | Gewünschte Nutzungsdauer des Verbrauchers (z. B. 2 h für einen Waschgang) |
+| Vorausschau | Number | Wie weit in die Zukunft nach einer Startzeit gesucht wird (max. begrenzt durch die verfügbaren Preisdaten) |
+| danach wieder | Number | Wartezeit nach Ablauf des Zeitfensters bis zur nächsten automatischen Suche (0–48 h, `0` = nur manuell per Button) |
+| Berechnen | Button | Manuelle Neuberechnung der optimalen Startzeit sofort auslösen |
+| Nur Nachtstrom | Switch | Suche auf Nachtzeiten (20–07 Uhr) einschränken |
+
+**So arbeitet die Optimierung:**
+
+- Eine einmal berechnete Startzeit bleibt **eingefroren**, solange sie in der Zukunft liegt – sie springt also nicht ständig um, während eine Automatisierung darauf wartet. Nur der aktuelle Preis wird weiter aktualisiert.
+- Ist das Zeitfenster abgelaufen, entscheidet **„danach wieder"**: Bei `0` passiert nichts, bis du den **Berechnen**-Button drückst. Bei z. B. `8` wird 8 Stunden nach Fenster-Ende automatisch das nächste günstige Zeitfenster gesucht.
+- Änderungen an **Zeitraum**, **Vorausschau** oder dem **Nachtstrom**-Schalter stoßen die Berechnung direkt an.
+
+**Beispiel-Automatisierung** – Steckdose zum günstigsten Zeitpunkt einschalten:
+
+```yaml
+automation:
+  - alias: "Waschmaschine im günstigsten Zeitfenster starten"
+    trigger:
+      - platform: time
+        at: sensor.vision_tools_gunstigste_startzeit_fur_2h
+    action:
+      - service: switch.turn_on
+        target:
+          entity_id: switch.steckdose_waschmaschine
+```
+
+> 💡 Die passende **Lovelace-Karte** für die Steuerung ist die [iONA Vision Tools Card](#iona-vision-tools-card-iona-vision-card) – inklusive Slider, Berechnen-Button und Countdown zur Startzeit.
+
+### Vision aktivieren
+
+Falls die Vision-Module vorhanden sind:
+
 1. **Einstellungen → Geräte & Dienste → iona-ha → Optionen**
-2. „mein Strom Vision aktivieren" einschalten
-3. Optional: „Vision Tools aktivieren" für die Steuerungs-Entitäten
-4. Änderungen speichern – Integration lädt automatisch neu
+2. „mein Strom Vision aktivieren" einschalten (`vision_tariff` – Preissensor & Preisdaten)
+3. Optional: „Vision Tools aktivieren" (`vision_tools` – Zeitfenster-Optimierung mit allen Steuerentitäten)
+4. Änderungen speichern – die Integration lädt automatisch neu
+
+> ⚠️ **Hinweis:** Die angezeigten Preise werden nach bestem Wissen aus Spotpreisen und Tarifdaten berechnet, können aber von der tatsächlichen Abrechnung abweichen. Verbindlich ist allein die Abrechnung von enviaM.
 
 ---
 

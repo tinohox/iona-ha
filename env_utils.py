@@ -156,7 +156,7 @@ def get_max_datenlage_stunden() -> int:
         diff_h = future_count // _EINTRAEGE_PRO_STUNDE
         # Mindestens 2 (1h Zeitraum + 1h Vorausschau)
         return max(2, diff_h)
-    except (json.JSONDecodeError, OSError, Exception):
+    except Exception:  # noqa: BLE001
         return 2
 
 
