@@ -417,7 +417,7 @@ class IonaDataManager:
         _LOGGER.info("Fertig: calc_preise → %s", "OK" if ok else "FEHLER")
 
     async def _task_vision(self) -> None:
-        """Vision-Berechnung – nur bei aktiviertem Tarif und vorhandenen Daten."""
+        """Vision-Berechnung – eingefroren außer wenn Neuberechnung fällig."""
         if not await self.hass.async_add_executor_job(is_vision_enabled):
             return
 
@@ -429,7 +429,25 @@ class IonaDataManager:
         if not await self.hass.async_add_executor_job(_check_brutto):
             _LOGGER.debug("Überspringe Vision: spotpreise_brutto_db.json fehlt")
             return
-        _LOGGER.info("Starte: vision")
+        _LOGGER.debug("Starte: vision (force=False)")
         from .app.vision import run as _run
-        ok = await self.hass.async_add_executor_job(_run)
-        _LOGGER.info("Fertig: vision → %s", "OK" if ok else "FEHLER")
+        ok = await self.hass.async_add_executor_job(_run, False)
+        _LOGGER.debug("Fertig: vision → %s", "OK" if ok else "FEHLER")
+
+    async def _task_vision_force(self) -> None:
+        """Vision-Berechnung erzwingen – immer neu berechnen (manueller Button)."""
+        if not await self.hass.async_add_executor_job(is_vision_enabled):
+            return
+
+        def _check_brutto():
+            return os.path.isfile(
+                os.path.join(_DATA_DIR, "spotpreise_brutto_db.json")
+            )
+
+        if not await self.hass.async_add_executor_job(_check_brutto):
+            _LOGGER.debug("Überspringe Vision (force): spotpreise_brutto_db.json fehlt")
+            return
+        _LOGGER.info("Starte: vision (force=True)")
+        from .app.vision import run as _run
+        ok = await self.hass.async_add_executor_job(_run, True)
+        _LOGGER.info("Fertig: vision (force) → %s", "OK" if ok else "FEHLER")
