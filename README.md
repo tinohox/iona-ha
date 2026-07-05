@@ -15,7 +15,7 @@ Deine **iONA Box** liefert Energiedaten direkt an **Home Assistant** – mit Liv
 
 ## English (quick)
 
-This custom Home Assistant integration connects your **iONA box** to Home Assistant and provides live power and energy meter sensors.
+This custom Home Assistant integration connects your **iONA box** to Home Assistant and provides live power and energy meter sensors. Optionally it supports the dynamic tariff **"mein Strom Vision"** (enviaM): 15-minute spot prices, gross end-consumer prices and automatic cheapest-time-window optimization (see the German section below for details).
 
 **Requirements**
 
