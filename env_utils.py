@@ -124,36 +124,40 @@ def is_vision_tools_enabled() -> bool:
 def get_max_datenlage_stunden() -> int:
     """Ermittelt die maximale Datenverfügbarkeit der Brutto-Spotpreise in ganzen Stunden.
 
-    Liest den letzten Timestamp aus spotpreise_brutto_db.json und berechnet
-    die Differenz zu jetzt.  Gibt mindestens 2 zurück (Zeitraum 1 + Vorausschau 1).
+    Zählt die tatsächlich in der Zukunft liegenden 15-Min-Einträge und rechnet
+    sie in Stunden um (floor). Das ergibt das echte Maximum für die Vorausschau,
+    unabhängig vom letzten Timestamp.
+    Gibt mindestens 2 zurück (Zeitraum 1 + Vorausschau 1).
     """
+    _EINTRAEGE_PRO_STUNDE = 4  # 15-Min-Intervalle
+
     try:
         if not os.path.isfile(_BRUTTO_DB):
-            return 48  # Fallback wenn keine Daten
+            return 2  # Keine Daten → Minimum
 
         with open(_BRUTTO_DB, "r", encoding="utf-8") as fh:
             data = json.load(fh)
 
-        timestamps = []
+        now = datetime.now().astimezone()
+        future_count = 0
         for entry in data.get("_default", {}).values():
             ts_str = entry.get("timestamp")
             if ts_str:
                 try:
                     ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                    timestamps.append(ts)
+                    if ts >= now:
+                        future_count += 1
                 except (ValueError, TypeError):
                     continue
 
-        if not timestamps:
-            return 48
+        if future_count == 0:
+            return 2
 
-        letzter_ts = max(timestamps)
-        now = datetime.now().astimezone()
-        diff_h = int((letzter_ts - now).total_seconds() / 3600)
-        # Mindestens 2 (1h Zeitraum + 1h Vorausschau), maximal realer Wert
+        diff_h = future_count // _EINTRAEGE_PRO_STUNDE
+        # Mindestens 2 (1h Zeitraum + 1h Vorausschau)
         return max(2, diff_h)
     except (json.JSONDecodeError, OSError, Exception):
-        return 48
+        return 2
 
 
 def get_stunden_block() -> int:
@@ -195,6 +199,27 @@ def set_vorausschau_stunden(value: int) -> bool:
     min_val = zeitraum + 1
     data = read_env_file(ACCOUNT_ENV)
     data["vorausschau_stunden"] = str(max(min_val, min(max_daten, int(value))))
+    return write_env_file(ACCOUNT_ENV, data)
+
+
+def get_danach_wieder_stunden() -> int:
+    """Gibt die konfigurierten 'danach wieder'-Stunden zurück (0 = deaktiviert).
+
+    Definiert, wie viele Stunden nach Ende des günstigen Zeitfensters
+    automatisch ein neuer günstigster Zeitpunkt berechnet wird.
+    0 bedeutet: keine automatische Neuberechnung (nur manuell per Button).
+    """
+    try:
+        val = int(read_env_value(ACCOUNT_ENV, "danach_wieder_stunden", "0"))
+        return max(0, val)
+    except (ValueError, TypeError):
+        return 0
+
+
+def set_danach_wieder_stunden(value: int) -> bool:
+    """Setzt die 'danach wieder'-Stunden in der account.env (min 0, max 48)."""
+    data = read_env_file(ACCOUNT_ENV)
+    data["danach_wieder_stunden"] = str(max(0, min(48, int(value))))
     return write_env_file(ACCOUNT_ENV, data)
 
 

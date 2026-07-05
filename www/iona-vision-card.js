@@ -19,6 +19,32 @@ class IonaVisionCard extends HTMLElement {
     this._rendered = false; // Konfig geändert → neu aufbauen
   }
 
+  _buildDanachWiederSlider(id) {
+    const s = this._st(id);
+    if (!s) return '';
+    const v = parseFloat(s.state);
+    const mn = 0, mx = 48, st = 1;
+    const vc = Math.max(mn, Math.min(mx, v));
+    const pct = (mx === mn) ? 0 : ((vc - mn) / (mx - mn) * 100).toFixed(1);
+    const label = vc === 0 ? 'aus' : vc + '\u202fh';
+    return '<div class="sl-row">' +
+      '<span class="sl-lbl">danach\u00a0wieder</span>' +
+      '<input type="range" class="sl-input" data-id="' + id + '"' +
+        ' min="' + mn + '" max="' + mx + '" step="' + st + '" value="' + vc + '"' +
+        ' style="--pct:' + pct + '%">' +
+      '<span class="sl-val" data-id="' + id + '">' + label + '</span>' +
+    '</div>';
+  }
+
+  _buildButton(id, label, icon) {
+    return '<div class="btn-row">' +
+      '<button class="action-btn" data-button="' + id + '">' +
+        (icon ? '<span class="btn-icon">' + icon + '</span>' : '') +
+        label +
+      '</button>' +
+    '</div>';
+  }
+
   set hass(h) {
     this._h = h;
     if (!this._rendered) {
@@ -65,6 +91,21 @@ class IonaVisionCard extends HTMLElement {
     } catch (e) { return ''; }
   }
 
+  _fmtTimestamp(iso) {
+    if (!iso) return '';
+    try {
+      const d = new Date(iso);
+      if (isNaN(d)) return '';
+      const wd = d.toLocaleDateString('de-DE', { weekday: 'short' });
+      const dd = String(d.getDate()).padStart(2,'0');
+      const mo = String(d.getMonth()+1).padStart(2,'0');
+      const yy = d.getFullYear();
+      const hh = String(d.getHours()).padStart(2,'0');
+      const mm = String(d.getMinutes()).padStart(2,'0');
+      return wd + '\u202f' + dd + '.' + mo + '.' + yy + '\u202f\u00b7\u202f' + hh + ':' + mm + '\u202fUhr';
+    } catch(e) { return ''; }
+  }
+
   _fmtCountdown(iso) {
     if (!iso) return '';
     try {
@@ -91,14 +132,16 @@ class IonaVisionCard extends HTMLElement {
     const startIso = sSt ? sSt.state : null;
     const kosten   = sKo ? parseFloat(sKo.state) : null;
 
-    const timeEl = sr.querySelector('#sz-time');
-    const dayEl  = sr.querySelector('#sz-day');
-    const cdEl   = sr.querySelector('#sz-cd');
-    const coEl   = sr.querySelector('#sz-cost');
+    const timeEl   = sr.querySelector('#sz-time');
+    const dayEl    = sr.querySelector('#sz-day');
+    const cdEl     = sr.querySelector('#sz-cd');
+    const coEl     = sr.querySelector('#sz-cost');
+    const tsEl     = sr.querySelector('#sz-ts');
 
     if (timeEl) timeEl.textContent = this._fmtTime(startIso);
     if (dayEl)  dayEl.textContent  = this._fmtDay(startIso);
     if (cdEl)   cdEl.textContent   = this._fmtCountdown(startIso);
+    if (tsEl)   tsEl.textContent   = this._fmtTimestamp(startIso);
     if (coEl && kosten !== null && !isNaN(kosten)) {
       const stunden = (sSt && sSt.attributes && sSt.attributes.stunden_block)
         || (sKo && sKo.attributes && sKo.attributes.stunden_block) || '?';
@@ -106,8 +149,27 @@ class IonaVisionCard extends HTMLElement {
     }
   }
 
+  _updateDanachWieder(id) {
+    if (!id || this._sliderLock[id]) return;
+    const s = this._st(id);
+    if (!s) return;
+    const sr = this.shadowRoot;
+    const input = sr.querySelector('input.sl-input[data-id="' + id + '"]');
+    const valEl = sr.querySelector('.sl-val[data-id="' + id + '"]');
+    if (input && sr.activeElement !== input) {
+      const v = parseFloat(s.state);
+      const vc = Math.max(0, Math.min(48, v));
+      if (!isNaN(vc) && parseFloat(input.value) !== vc) {
+        input.value = vc;
+        if (valEl) valEl.textContent = vc === 0 ? 'aus' : vc + '\u202fh';
+        this._updateSliderFill(input);
+      }
+    }
+  }
+
   _updateSliders() {
     const sr = this.shadowRoot;
+    if (this._c.entity_danach_wieder) this._updateDanachWieder(this._c.entity_danach_wieder);
     // Zeitraum-Slider
     if (this._c.entity_zeitraum) {
       const id = this._c.entity_zeitraum;
@@ -188,9 +250,9 @@ class IonaVisionCard extends HTMLElement {
     const s = this._st(id);
     if (!s) return '';
     const hours = parseFloat(s.state);
-    const mn  = 1;
-    const mx  = 24;
-    const st  = 1;
+    const mn  = parseFloat((s.attributes && s.attributes.min) || 1);
+    const mx  = parseFloat((s.attributes && s.attributes.max) || 24);
+    const st  = parseFloat((s.attributes && s.attributes.step) || 1);
     const vc  = Math.max(mn, Math.min(mx, hours));
     const pct = ((vc - mn) / (mx - mn) * 100).toFixed(1);
     const target = new Date(Date.now() + vc * 3600000);
@@ -266,15 +328,25 @@ class IonaVisionCard extends HTMLElement {
     const stunden  = (sSt && sSt.attributes && sSt.attributes.stunden_block)
       || (sKo && sKo.attributes && sKo.attributes.stunden_block) || '?';
 
-    const sliderZ = this._c.entity_zeitraum    ? this._buildSlider(this._c.entity_zeitraum,    'Zeitraum', 8, 1)    : '';
-    const sliderV = this._c.entity_vorausschau ? this._buildVorausschauSlider(this._c.entity_vorausschau) : '';
-    const sw      = this._c.entity_nacht       ? this._buildSwitch(this._c.entity_nacht, 'Nur Nachtstrom (20\u201307\u00a0Uhr)') : '';
-    const hasControls = sliderZ || sliderV || sw;
+    const sliderZ  = this._c.entity_zeitraum      ? this._buildSlider(this._c.entity_zeitraum, 'Zeitraum', 8, 1) : '';
+    const sliderV  = this._c.entity_vorausschau   ? this._buildVorausschauSlider(this._c.entity_vorausschau) : '';
+    const sliderDW = this._c.entity_danach_wieder ? this._buildDanachWiederSlider(this._c.entity_danach_wieder) : '';
+    const sw       = this._c.entity_nacht         ? this._buildSwitch(this._c.entity_nacht, 'Nur Nachtstrom (20\u201307\u00a0Uhr)') : '';
+    const btnBerechnen = this._c.entity_berechnen ? this._buildButton(this._c.entity_berechnen, 'Neu berechnen', '\uD83D\uDD04') : '';
+    const hasControls = sliderZ || sliderV || sliderDW || sw || btnBerechnen;
 
     const mainHtml = (startIso && this._fmtTime(startIso) !== '\u2014')
       ? '<div class="sz-wrap">' +
           '<div class="sz-label">G\u00fcnstigste Startzeit</div>' +
           '<div id="sz-time" class="sz-time">' + this._fmtTime(startIso) + '</div>' +
+          '<div id="sz-ts" class="sz-ts">' + this._fmtTimestamp(startIso) + '</div>' +
+          (this._c.entity_startzeit
+            ? '<div class="sz-eid" data-copy="' + this._c.entity_startzeit + '">' +
+                '<span class="sz-eid-icon">\uD83D\uDCCB</span>' +
+                '<code class="sz-eid-val">' + (this._c.entity_startzeit || '').replace(/_f\u00fcr_\d+h$|_fur_\d+h$/, '') + '</code>' +
+                '<span class="sz-eid-hint">tippen zum Kopieren</span>' +
+              '</div>'
+            : '') +
           '<div class="sz-meta">' +
             '<span id="sz-day" class="sz-day">' + this._fmtDay(startIso) + '</span>' +
             '<span id="sz-cd"  class="sz-cd">'  + this._fmtCountdown(startIso) + '</span>' +
@@ -297,6 +369,14 @@ class IonaVisionCard extends HTMLElement {
         '.sz-wrap{text-align:center;padding:4px 0 20px}' +
         '.sz-label{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--secondary-text-color);margin-bottom:6px}' +
         '.sz-time{font-size:52px;font-weight:700;color:var(--primary-color);line-height:1}' +
+        '.sz-ts{font-size:11px;color:var(--secondary-text-color);margin-top:4px;letter-spacing:.1px}' +
+        '.sz-eid{display:inline-flex;align-items:center;gap:6px;margin:6px auto 0;background:var(--secondary-background-color);border-radius:6px;padding:4px 10px;cursor:pointer;transition:background .15s}' +
+        '.sz-eid:hover{background:var(--primary-color);color:#fff}' +
+        '.sz-eid:hover .sz-eid-val,.sz-eid:hover .sz-eid-hint{color:#fff}' +
+        '.sz-eid.copied{background:#4caf50}' +
+        '.sz-eid-icon{font-size:11px}' +
+        '.sz-eid-val{font-size:10px;font-family:monospace;color:var(--primary-text-color);word-break:break-all}' +
+        '.sz-eid-hint{font-size:9px;color:var(--secondary-text-color);white-space:nowrap}' +
         '.sz-meta{display:flex;justify-content:center;gap:10px;margin-top:5px}' +
         '.sz-day{font-size:13px;font-weight:600;color:var(--primary-text-color)}' +
         '.sz-cd{font-size:12px;color:var(--secondary-text-color)}' +
@@ -319,6 +399,10 @@ class IonaVisionCard extends HTMLElement {
         '.sw-knob{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .2s;display:block}' +
         '.sw-btn.sw-on .sw-knob{transform:translateX(18px)}' +
         '.nd{text-align:center;font-size:12px;color:var(--secondary-text-color);padding:24px 0}' +
+        '.btn-row{display:flex;justify-content:flex-end;margin-top:4px;margin-bottom:8px}' +
+        '.action-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 16px;border-radius:8px;border:1px solid var(--primary-color);background:transparent;color:var(--primary-color);font-size:13px;font-weight:600;cursor:pointer;transition:background .15s,color .15s}' +
+        '.action-btn:hover{background:var(--primary-color);color:#fff}' +
+        '.btn-icon{font-size:14px}' +
       '</style>' +
       '<ha-card>' +
         '<div class="hd">' +
@@ -326,7 +410,7 @@ class IonaVisionCard extends HTMLElement {
           '<span class="badge">enviaM</span>' +
         '</div>' +
         mainHtml +
-        (hasControls ? '<div class="dv"></div>' + sliderZ + sliderV + sw : '') +
+        (hasControls ? '<div class="dv"></div>' + sliderZ + sliderV + sliderDW + sw + btnBerechnen : '') +
       '</ha-card>';
 
     this._attachEvents();
@@ -368,7 +452,47 @@ class IonaVisionCard extends HTMLElement {
       });
     });
 
-    // Time-Picker-Events entfernt (kein tp-input mehr)
+    // danach-wieder Slider: Label zeigt 0 als 'aus'
+    sr.querySelectorAll('.sl-input').forEach(input => {
+      // bereits durch querySelectorAll oben behandelt – überschreibe Label für danach_wieder
+      if (input.dataset.id === (this._c.entity_danach_wieder || '')) {
+        const valEl = sr.querySelector('.sl-val[data-id="' + input.dataset.id + '"]');
+        input.addEventListener('input', () => {
+          const v = parseInt(input.value, 10);
+          if (valEl) valEl.textContent = v === 0 ? 'aus' : v + '\u202fh';
+          this._updateSliderFill(input);
+        });
+      }
+    });
+
+    // Button
+    sr.querySelectorAll('.action-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.button;
+        if (id) this._svc('button', 'press', { entity_id: id });
+        // kurzes visuelles Feedback
+        btn.style.background = 'var(--primary-color)';
+        btn.style.color = '#fff';
+        setTimeout(() => { btn.style.background = ''; btn.style.color = ''; }, 600);
+      });
+    });
+
+    // Entity-ID Copy-Chip
+    const eidChip = sr.querySelector('.sz-eid[data-copy]');
+    if (eidChip) {
+      eidChip.addEventListener('click', () => {
+        const id = eidChip.dataset.copy;
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(id).then(() => {
+            const hint = eidChip.querySelector('.sz-eid-hint');
+            const prev = hint ? hint.textContent : '';
+            eidChip.classList.add('copied');
+            if (hint) hint.textContent = 'Kopiert!';
+            setTimeout(() => { eidChip.classList.remove('copied'); if (hint) hint.textContent = prev; }, 1500);
+          });
+        }
+      });
+    }
 
     // Switch
     sr.querySelectorAll('.sw-btn').forEach(btn => {
@@ -385,11 +509,13 @@ class IonaVisionCard extends HTMLElement {
 
   static getStubConfig() {
     return {
-      entity_startzeit:   'sensor.vision_tools_gunstigste_startzeit_fur_2h',
-      entity_kosten:      'sensor.vision_tools_durchschnittskosten_fur_die_2h',
-      entity_zeitraum:    'number.mein_strom_vision_tools_vision_tools_zeitraum',
-      entity_vorausschau: 'number.mein_strom_vision_tools_vision_tools_vorausschau',
-      entity_nacht:       'switch.mein_strom_vision_tools_vision_tools_nur_nachtstrom',
+      entity_startzeit:     'sensor.vision_tools_gunstigste_startzeit_fur_2h',
+      entity_kosten:        'sensor.vision_tools_durchschnittskosten_fur_die_2h',
+      entity_zeitraum:      'number.mein_strom_vision_tools_vision_tools_zeitraum',
+      entity_vorausschau:   'number.mein_strom_vision_tools_vision_tools_vorausschau',
+      entity_danach_wieder: 'number.mein_strom_vision_tools_vision_tools_danach_wieder',
+      entity_nacht:         'switch.mein_strom_vision_tools_vision_tools_nur_nachtstrom',
+      entity_berechnen:     'button.mein_strom_vision_tools_vision_tools_berechnen',
     };
   }
 }

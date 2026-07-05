@@ -178,7 +178,7 @@ entity_energy: sensor.stromzahler_gesamtverbrauch
 
 ### iONA Vision Tools Card (`iona-vision-card`)
 
-Steuerungs-Kachel für die Vision-Optimierung: günstigste Startzeit (groß dargestellt), Durchschnittskosten, Zeitraum-Slider, Späteste-Startzeit-Slider und Nacht-Modus-Schalter.
+Steuerungs-Kachel für die Vision-Optimierung: günstigste Startzeit (groß dargestellt), Durchschnittskosten, Zeitraum-Slider, Späteste-Startzeit-Slider, „danach wieder"-Slider, Neu-berechnen-Button und Nacht-Modus-Schalter.
 
 > ⚠️ **Nur relevant wenn Vision Tools aktiviert ist.** Ohne Vision-Zusatzmodule liefert diese Karte keine Daten.
 
@@ -188,6 +188,8 @@ entity_startzeit: sensor.vision_tools_gunstigste_startzeit_fur_2h
 entity_kosten: sensor.vision_tools_durchschnittskosten_fur_die_2h
 entity_zeitraum: number.mein_strom_vision_tools_vision_tools_zeitraum
 entity_vorausschau: number.mein_strom_vision_tools_vision_tools_vorausschau
+entity_danach_wieder: number.mein_strom_vision_tools_vision_tools_danach_wieder
+entity_berechnen: button.mein_strom_vision_tools_vision_tools_berechnen
 entity_nacht: switch.mein_strom_vision_tools_vision_tools_nur_nachtstrom
 ```
 
@@ -199,6 +201,8 @@ entity_nacht: switch.mein_strom_vision_tools_vision_tools_nur_nachtstrom
 | `entity_kosten` | ✅ | Sensor für Durchschnittskosten |
 | `entity_zeitraum` | ✅ | Number-Entität für Zeitraum (Stunden) |
 | `entity_vorausschau` | ✅ | Number-Entität für späteste Startzeit (Vorausschau) |
+| `entity_danach_wieder` | ❌ | Number-Entität für „danach wieder"-Wartezeit (0–48 h) |
+| `entity_berechnen` | ❌ | Button-Entität für manuelle Neuberechnung |
 | `entity_nacht` | ❌ | Switch für Nur-Nachtstrom-Modus (20–07 Uhr) |
 
 ### Karte zum Dashboard hinzufügen
@@ -225,6 +229,8 @@ Die Integration unterstützt den dynamischen Stromtarif **mein Strom Vision** vo
 | Durchschnittskosten | Sensor | Ø-Preis im günstigen Zeitfenster |
 | Zeitraum | Number | Gewünschte Nutzungsdauer (1–8 h) |
 | Späteste Startzeit | Number | Suchfenster für Optimierung (1–24 h) |
+| danach wieder | Number | Wartezeit bis zur nächsten automatischen Suche (0–48 h, 0 = sofort) |
+| Berechnen | Button | Manuelle Neuberechnung der optimalen Startzeit auslösen |
 | Nur Nachtstrom | Switch | Suche auf 20–07 Uhr einschränken |
 
 **Vision aktivieren** (falls Module vorhanden):

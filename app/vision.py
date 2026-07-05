@@ -75,6 +75,46 @@ def _read_nur_nacht() -> bool:
     return False
 
 
+def _read_danach_wieder_stunden() -> int:
+    """Liest die 'danach wieder'-Stunden aus account.env (0 = deaktiviert)."""
+    try:
+        with open(ACCOUNT_ENV, "r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("danach_wieder_stunden="):
+                    val = line.strip().split("=", 1)[1].strip('"')
+                    return max(0, int(val))
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+    return 0
+
+
+def _lade_aktuelle_vision() -> dict | None:
+    """Lädt das aktuell gespeicherte Vision-Ergebnis aus der DB."""
+    if not os.path.isfile(VISION_DB):
+        return None
+    try:
+        with open(VISION_DB, "r", encoding="utf-8") as fh:
+            import json as _json
+            data = _json.load(fh)
+        items = list(data.get("_default", {}).values())
+        return items[0] if items else None
+    except Exception:
+        return None
+
+
+def _aktualisiere_preis(aktuelle: dict, aktueller_preis: float | None) -> None:
+    """Nur aktuellen Preis und Timestamp in der DB aktualisieren."""
+    try:
+        aktuelle["aktueller_preis"] = aktueller_preis
+        aktuelle["timestamp"] = datetime.now().isoformat()
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with TinyDB(VISION_DB) as db:
+            db.truncate()
+            db.insert(aktuelle)
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.error("Vision: Fehler beim Preis-Update – %s", err)
+
+
 def _lade_spotpreise() -> list[dict]:
     """Lädt Brutto-Spotpreise und gibt sortierte Liste zurück."""
     if not os.path.isfile(SPOTPREIS_BRUTTO_DB):
@@ -176,8 +216,15 @@ def _finde_guenstigste_startzeit(
     return min_start, min_avg
 
 
-def run() -> bool:
-    """Vision-Berechnung durchführen und in DB speichern."""
+def run(force: bool = False) -> bool:
+    """Vision-Berechnung durchführen und in DB speichern.
+
+    force=False (Standard): Berechnung nur wenn nötig (Freeze-Logik).
+      - Startzeit noch in der Zukunft → eingefroren, nur Preis aktualisieren.
+      - Startzeit abgelaufen + danach_wieder=0 → eingefroren.
+      - Startzeit abgelaufen + danach_wieder>0 + Wartezeit noch nicht vorbei → eingefroren.
+    force=True: Immer neu berechnen (manueller Button).
+    """
     stunden = _read_stunden_block()
     vorausschau = _read_vorausschau_stunden()
     nur_nacht = _read_nur_nacht()
@@ -189,6 +236,56 @@ def run() -> bool:
 
     aktueller_preis = _finde_aktuellen_preis(preise)
 
+    # --- Freeze-Logik (nur wenn nicht manuell erzwungen) ---
+    if not force:
+        aktuelle = _lade_aktuelle_vision()
+        if aktuelle:
+            startzeit_str = aktuelle.get("guenstigste_startzeit")
+            gespeicherter_block = aktuelle.get("stunden_block", stunden)
+            if startzeit_str:
+                try:
+                    startzeit = datetime.fromisoformat(startzeit_str)
+                    now = datetime.now().astimezone()
+
+                    if now < startzeit:
+                        # Startzeit liegt noch in der Zukunft → eingefroren
+                        _LOGGER.debug(
+                            "Vision: Startzeit noch in der Zukunft (%s) – eingefroren",
+                            startzeit.strftime("%d.%m. %H:%M"),
+                        )
+                        _aktualisiere_preis(aktuelle, aktueller_preis)
+                        return True
+
+                    # Zeitfenster ist gestartet oder abgelaufen
+                    window_end = startzeit + timedelta(hours=gespeicherter_block)
+                    danach_wieder = _read_danach_wieder_stunden()
+
+                    if danach_wieder == 0:
+                        # Automatische Neuberechnung deaktiviert
+                        _LOGGER.debug(
+                            "Vision: danach_wieder=0 – kein automatischer Neustart"
+                        )
+                        _aktualisiere_preis(aktuelle, aktueller_preis)
+                        return True
+
+                    auto_recalc_time = window_end + timedelta(hours=danach_wieder)
+                    if now < auto_recalc_time:
+                        # Wartezeit nach Fenster noch nicht vorbei
+                        _LOGGER.debug(
+                            "Vision: Warte auf danach_wieder (%dh nach %s) – eingefroren",
+                            danach_wieder,
+                            window_end.strftime("%d.%m. %H:%M"),
+                        )
+                        _aktualisiere_preis(aktuelle, aktueller_preis)
+                        return True
+
+                    _LOGGER.info(
+                        "Vision: danach_wieder-Zeit erreicht – automatische Neuberechnung"
+                    )
+                except (ValueError, TypeError):
+                    pass  # Ungültiger Timestamp → neu berechnen
+
+    # --- Neuberechnung ---
     start, avg = _finde_guenstigste_startzeit(
         preise, stunden, nur_nacht=nur_nacht, max_vorausschau_h=vorausschau
     )

@@ -11,6 +11,8 @@ from .env_utils import (
     get_vorausschau_stunden,
     set_vorausschau_stunden,
     get_max_datenlage_stunden,
+    get_danach_wieder_stunden,
+    set_danach_wieder_stunden,
     is_vision_tools_enabled,
 )
 
@@ -33,7 +35,11 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
     if tools_enabled:
         async_add_entities(
-            [IonaStundenBlockNumber(hass), IonaVorausschauNumber(hass)],
+            [
+                IonaStundenBlockNumber(hass),
+                IonaVorausschauNumber(hass),
+                IonaDanachWiederNumber(hass),
+            ],
             update_before_add=True,
         )
 
@@ -180,17 +186,25 @@ class IonaVorausschauNumber(NumberEntity):
         }
 
     async def async_set_native_value(self, value: float) -> None:
-        """Setze den neuen Wert (muss > Zeitraum sein)."""
+        """Setze den neuen Wert (clamped: zeitraum+1 bis max_datenlage)."""
         int_value = int(value)
         zeitraum = await self._hass.async_add_executor_job(get_stunden_block)
+        max_daten = await self._hass.async_add_executor_job(get_max_datenlage_stunden)
         min_vorausschau = zeitraum + 1
+        max_vorausschau = max(min_vorausschau, max_daten)
 
-        # Erzwinge Minimum
+        # Clamp gegen aktuelle Datenlage (Frontend kann veralteten Max-Wert senden)
         if int_value < min_vorausschau:
             int_value = min_vorausschau
             _LOGGER.info(
                 "Vorausschau auf Minimum %dh korrigiert (Zeitraum=%dh)",
                 int_value, zeitraum,
+            )
+        elif int_value > max_vorausschau:
+            int_value = max_vorausschau
+            _LOGGER.info(
+                "Vorausschau auf Maximum %dh begrenzt (Datenlage=%dh)",
+                int_value, max_daten,
             )
 
         await self._hass.async_add_executor_job(set_vorausschau_stunden, int_value)
@@ -208,13 +222,90 @@ class IonaVorausschauNumber(NumberEntity):
 
     async def async_update(self) -> None:
         """Aktualisiere den Wert, Zeitraum-Cache und Datenlage."""
-        self._attr_native_value = await self._hass.async_add_executor_job(
-            get_vorausschau_stunden
-        )
         self._cached_zeitraum = await self._hass.async_add_executor_job(
             get_stunden_block
         )
         self._cached_max_datenlage = await self._hass.async_add_executor_job(
             get_max_datenlage_stunden
+        )
+        stored = await self._hass.async_add_executor_job(
+            get_vorausschau_stunden
+        )
+        # Clamp gespeicherten Wert gegen aktuelle Range (Datenlage kann geschrumpft sein)
+        min_v = self._cached_zeitraum + 1
+        max_v = max(min_v, self._cached_max_datenlage)
+        if stored < min_v:
+            stored = min_v
+        elif stored > max_v:
+            stored = max_v
+        self._attr_native_value = stored
+
+
+class IonaDanachWiederNumber(NumberEntity):
+    """Number-Entity für 'danach wieder' – Wartezeit nach dem Zeitfenster.
+
+    Legt fest, wie viele Stunden nach Ende des günstigen Zeitfensters
+    automatisch ein neuer günstigster Zeitpunkt berechnet wird.
+    0 = deaktiviert (nur manuell per 'Berechnen'-Button).
+    """
+
+    _attr_has_entity_name = True
+
+    def __init__(self, hass):
+        self._hass = hass
+        self._attr_native_value = 0
+
+    @property
+    def name(self) -> str:
+        return "Vision Tools – danach wieder"
+
+    @property
+    def unique_id(self) -> str:
+        return "iona_vision_danach_wieder"
+
+    @property
+    def native_min_value(self) -> float:
+        return 0
+
+    @property
+    def native_max_value(self) -> float:
+        return 48
+
+    @property
+    def native_step(self) -> float:
+        return 1
+
+    @property
+    def native_unit_of_measurement(self) -> str:
+        return "h"
+
+    @property
+    def mode(self) -> NumberMode:
+        return NumberMode.SLIDER
+
+    @property
+    def icon(self) -> str:
+        return "mdi:timer-refresh-outline"
+
+    @property
+    def device_info(self) -> dict:
+        return {
+            "identifiers": {("iona", "vision_tools")},
+            "name": "mein Strom Vision Tools",
+            "manufacturer": "enviaM",
+            "model": "Vision Optimierung",
+        }
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Setze den neuen Wert."""
+        int_value = int(value)
+        await self._hass.async_add_executor_job(set_danach_wieder_stunden, int_value)
+        self._attr_native_value = int_value
+        _LOGGER.info("danach_wieder auf %dh gesetzt", int_value)
+
+    async def async_update(self) -> None:
+        """Aktualisiere den Wert."""
+        self._attr_native_value = await self._hass.async_add_executor_job(
+            get_danach_wieder_stunden
         )
 
