@@ -54,8 +54,26 @@ def _fetch_data(url: str, access_token: str) -> dict | None:
         _LOGGER.warning("LAN-Daten: API-Fehler %d", response.status_code)
         return None
     except requests.RequestException as err:
-        _LOGGER.error("LAN-Daten: Verbindungsfehler – %s", err)
+        # Nur warning: läuft im 5-s-Takt; dauerhafte Ausfälle meldet der
+        # DataManager per Notification (Edge-Trigger)
+        _LOGGER.warning("LAN-Daten: Verbindungsfehler – %s", err)
         return None
+
+
+def _is_newer(new_ts: str | None, old_ts: str | None) -> bool:
+    """True, wenn new_ts neuer als old_ts ist.
+
+    Vergleicht als datetime (korrekt über Zeitzonen-/DST-Wechsel hinweg);
+    bei nicht parsebaren Werten Fallback auf String-Vergleich wie bisher.
+    """
+    if not old_ts:
+        return True
+    if not new_ts:
+        return False
+    try:
+        return datetime.fromisoformat(new_ts) > datetime.fromisoformat(old_ts)
+    except (ValueError, TypeError):
+        return new_ts > old_ts
 
 
 def _parse_power(raw_value: int | None) -> int | None:
@@ -89,17 +107,7 @@ def run() -> bool:
         _LOGGER.error("LAN-Token Parsing fehlgeschlagen: %s", err)
         return False
 
-    # Erreichbarkeit prüfen
-    import socket
-    try:
-        sock = socket.create_connection((iona_box, 80), timeout=3)
-        sock.close()
-        _LOGGER.info("iONA Box %s ist erreichbar", iona_box)
-    except (socket.timeout, OSError) as err:
-        _LOGGER.warning("iONA Box %s nicht erreichbar: %s", iona_box, err)
-        return False
-
-    # Daten abrufen
+    # Daten abrufen (Erreichbarkeit deckt der Request-Timeout selbst ab)
     url = f"http://{iona_box}/meter/now"
     data = _fetch_data(url, access_token)
     if data is None:
@@ -172,24 +180,21 @@ def run() -> bool:
             updated = False
 
             if gesamtverbrauch is not None:
-                old_ts = entry.get("Gesamtverbrauch_timestamp")
-                if not old_ts or gesamtverbrauch_ts > old_ts:
+                if _is_newer(gesamtverbrauch_ts, entry.get("Gesamtverbrauch_timestamp")):
                     entry["Gesamtverbrauch"] = gesamtverbrauch
                     entry["Gesamtverbrauch_timestamp"] = gesamtverbrauch_ts
                     updated = True
 
             if gesamteinspeisung is not None:
-                old_ts = entry.get("Gesamteinspeisung_timestamp")
                 old_val = entry.get("Gesamteinspeisung")
-                if not old_ts or gesamteinspeisung_ts > old_ts:
+                if _is_newer(gesamteinspeisung_ts, entry.get("Gesamteinspeisung_timestamp")):
                     if not (old_val and old_val > 0 and gesamteinspeisung == 0):
                         entry["Gesamteinspeisung"] = gesamteinspeisung
                         entry["Gesamteinspeisung_timestamp"] = gesamteinspeisung_ts
                         updated = True
 
             if momentanleistung is not None:
-                old_ts = entry.get("Momentanleistung_timestamp")
-                if not old_ts or momentanleistung_ts > old_ts:
+                if _is_newer(momentanleistung_ts, entry.get("Momentanleistung_timestamp")):
                     entry["Momentanleistung"] = momentanleistung
                     entry["Momentanleistung_timestamp"] = momentanleistung_ts
                     updated = True

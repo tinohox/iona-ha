@@ -7,9 +7,6 @@ Speichert das Ergebnis in LanToken.env.
 import os
 import logging
 import requests
-import urllib3
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,6 +37,7 @@ def _save_token(token_data: dict) -> None:
     with open(filepath, "w", encoding="utf-8") as fh:
         for key, value in token_data.items():
             fh.write(f"{key.upper()}={value}\n")
+    os.chmod(filepath, 0o600)
     _LOGGER.debug("LAN-Token gespeichert in %s", filepath)
 
 

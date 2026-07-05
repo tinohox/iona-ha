@@ -10,6 +10,7 @@ import logging
 import requests
 import urllib3
 
+# Nur die Warnung des Fallback-Requests unterdrücken (siehe _post_auth)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 _LOGGER = logging.getLogger(__name__)
@@ -18,6 +19,30 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_DIR = os.path.join(BASE_DIR, "env")
 
 AUTH_URL = "https://webapp.iona-energy.com/auth"
+
+
+def _post_auth(data: dict) -> requests.Response:
+    """POST an die Auth-API – mit TLS-Zertifikatsprüfung.
+
+    Fallback ohne Verifizierung nur bei SSL-Fehlern: Der Auth-Server
+    lieferte historisch eine unvollständige Zertifikatskette, weshalb
+    ältere Versionen die Prüfung komplett deaktiviert hatten. So bleiben
+    Bestandsinstallationen funktionsfähig, ohne die Prüfung generell
+    abzuschalten.
+    """
+    headers = {"Content-Type": "application/json"}
+    try:
+        return requests.post(AUTH_URL, headers=headers, json=data, timeout=15)
+    except requests.exceptions.SSLError as err:
+        _LOGGER.warning(
+            "TLS-Verifizierung für %s fehlgeschlagen (%s) – "
+            "Fallback ohne Zertifikatsprüfung",
+            AUTH_URL,
+            err,
+        )
+        return requests.post(
+            AUTH_URL, headers=headers, json=data, verify=False, timeout=15
+        )
 
 
 def _read_env(filename: str) -> dict:
@@ -43,6 +68,7 @@ def _save_token(token_data: dict) -> None:
     with open(filepath, "w", encoding="utf-8") as fh:
         for key, value in token_data.items():
             fh.write(f"{key.upper()}={value}\n")
+    os.chmod(filepath, 0o600)
     _LOGGER.debug("Web-Token gespeichert in %s", filepath)
 
 
@@ -56,12 +82,9 @@ def refresh() -> bool:
         return False
 
     data = {"method": "refresh", "refresh_token": refresh_token}
-    headers = {"Content-Type": "application/json"}
 
     try:
-        response = requests.post(
-            AUTH_URL, headers=headers, json=data, verify=False, timeout=15
-        )
+        response = _post_auth(data)
         response.raise_for_status()
         token_data = response.json()
         _save_token(token_data)
@@ -87,12 +110,9 @@ def run(username: str = "", password: str = "", use_refresh: bool = True) -> boo
         return False
 
     data = {"method": "login", "username": username, "password": password}
-    headers = {"Content-Type": "application/json"}
 
     try:
-        response = requests.post(
-            AUTH_URL, headers=headers, json=data, verify=False, timeout=15
-        )
+        response = _post_auth(data)
         response.raise_for_status()
         token_data = response.json()
         _save_token(token_data)

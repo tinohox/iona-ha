@@ -263,7 +263,7 @@ class IonaDataManager:
         if not await self.hass.async_add_executor_job(env_file_exists, LAN_TOKEN_ENV):
             _LOGGER.debug("Überspringe LAN-Daten: Kein LAN-Token vorhanden")
             return
-        _LOGGER.info("Starte: get_lan_data")
+        _LOGGER.debug("Starte: get_lan_data")
         from .app.get_lan_data import run as _run
         lock = self._meter_db_lock
 
@@ -307,7 +307,7 @@ class IonaDataManager:
                 )
                 self._lan_unreachable_notified = True
 
-        _LOGGER.info("Fertig: get_lan_data → %s", "OK" if ok else "FEHLER")
+        _LOGGER.debug("Fertig: get_lan_data → %s", "OK" if ok else "FEHLER")
 
     async def _task_web_data(self) -> None:
         """Web-Daten als Fallback wenn LAN nicht liefert.

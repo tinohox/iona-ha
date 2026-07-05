@@ -7,6 +7,8 @@ Schreibt in meter_db.json.
 import os
 import json
 import logging
+from datetime import datetime
+
 import requests
 from tinydb import TinyDB, Query
 
@@ -33,6 +35,22 @@ def _read_env(filename: str) -> dict:
     except FileNotFoundError:
         pass
     return env
+
+
+def _is_newer(new_ts, old_ts) -> bool:
+    """True, wenn new_ts neuer als old_ts ist.
+
+    Vergleicht als datetime (korrekt über Zeitzonen-/DST-Wechsel hinweg);
+    bei nicht parsebaren Werten Fallback auf direkten Vergleich wie bisher.
+    """
+    if not old_ts:
+        return True
+    if not new_ts:
+        return False
+    try:
+        return datetime.fromisoformat(new_ts) > datetime.fromisoformat(old_ts)
+    except (ValueError, TypeError):
+        return new_ts > old_ts
 
 
 def run() -> bool:
@@ -87,14 +105,12 @@ def run() -> bool:
             entry = result[0]
             updated = False
 
-            old_ts = entry.get("Gesamtverbrauch_timestamp")
-            if not old_ts or gesamtverbrauch_ts > old_ts:
+            if _is_newer(gesamtverbrauch_ts, entry.get("Gesamtverbrauch_timestamp")):
                 entry["Gesamtverbrauch"] = gesamtverbrauch
                 entry["Gesamtverbrauch_timestamp"] = gesamtverbrauch_ts
                 updated = True
 
-            old_ts = entry.get("Momentanleistung_timestamp")
-            if not old_ts or momentanleistung_ts > old_ts:
+            if _is_newer(momentanleistung_ts, entry.get("Momentanleistung_timestamp")):
                 entry["Momentanleistung"] = momentanleistung
                 entry["Momentanleistung_timestamp"] = momentanleistung_ts
                 updated = True

@@ -170,7 +170,8 @@ class IonaCard extends HTMLElement {
     if (!this._c || !this._h) return;
 
     const pw = this._num(this._c.entity_power);
-    const co = this._num(this._c.entity_consumed);
+    // entity_energy: Legacy-Alias für entity_consumed (ältere Konfigurationen)
+    const co = this._num(this._c.entity_consumed || this._c.entity_energy);
     const fb = this._num(this._c.entity_fed_back);
     const ss = this._st(this._c.entity_source);
     const stxt = ss ? ss.state : '\u2014';
@@ -274,5 +275,5 @@ window.customCards.push({
   name: 'iONA Stromz\u00e4hler',
   description: 'Echtzeit-Leistung, Z\u00e4hlersst\u00e4nde und optionaler Strompreis-Chart (Vision).',
   preview: false,
-  documentationURL: 'https://github.com/tinohoehne/iona-ha',
+  documentationURL: 'https://github.com/tinohox/iona-ha',
 });

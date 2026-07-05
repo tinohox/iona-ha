@@ -88,6 +88,7 @@ def write_env_file(filename: str, data: dict) -> bool:
                 lines.append(f'{key}="{value}"')
         with open(filepath, "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
+        os.chmod(filepath, 0o600)
         return True
     except Exception as err:  # noqa: BLE001
         _LOGGER.error("Fehler beim Schreiben von %s: %s", filename, err)

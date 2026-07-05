@@ -528,5 +528,5 @@ window.customCards.push({
   name: 'iONA Vision Tools',
   description: 'G\u00fcnstigste Startzeit, Durchschnittskosten und Optimierungs-Steuerung f\u00fcr mein Strom Vision.',
   preview: false,
-  documentationURL: 'https://github.com/tinohoehne/iona-ha',
+  documentationURL: 'https://github.com/tinohox/iona-ha',
 });

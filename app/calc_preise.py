@@ -25,16 +25,21 @@ def _load_json(filepath: Path) -> dict:
 
 
 def _save_json(data: dict, filepath: Path) -> None:
-    """Speichert Preise mit 2 Dezimalstellen."""
-    entries = []
+    """Speichert Preise mit 2 Dezimalstellen – atomar (tmp + rename).
+
+    sensor.py liest die Datei alle 5 s; direktes Schreiben könnte
+    einen Lesezugriff auf halb geschriebenes JSON treffen.
+    """
+    out = {"_default": {}}
     for key, entry in data["_default"].items():
-        price_str = f"{entry['price']:.2f}"
-        entries.append(
-            f'"{key}": {{"timestamp": "{entry["timestamp"]}", "price": {price_str}}}'
-        )
-    json_str = '{"_default": {' + ", ".join(entries) + "}}"
-    with open(filepath, "w", encoding="utf-8") as fh:
-        fh.write(json_str)
+        out["_default"][key] = {
+            "timestamp": entry["timestamp"],
+            "price": round(entry["price"], 2),
+        }
+    tmp_path = filepath.with_suffix(filepath.suffix + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as fh:
+        json.dump(out, fh, ensure_ascii=False)
+    os.replace(tmp_path, filepath)
 
 
 def _get_variable_costs(tariff: dict) -> float:

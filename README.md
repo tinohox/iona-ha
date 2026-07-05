@@ -3,7 +3,7 @@
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://hacs.xyz)
 [![Version](https://img.shields.io/badge/Version-2.0.8-blue.svg?style=for-the-badge)](https://github.com/tinohox/iona-ha/releases)
 [![Lizenz](https://img.shields.io/badge/Lizenz-MIT-green.svg?style=for-the-badge)](https://github.com/tinohox/iona-ha/blob/main/LICENSE)
-[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2023.1+-blue.svg?style=for-the-badge&logo=homeassistant)](https://www.home-assistant.io/)
+[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.11+-blue.svg?style=for-the-badge&logo=homeassistant)](https://www.home-assistant.io/)
 
 > **⚠️ Experimentelles Projekt – Nutzung auf eigene Gefahr**
 >
@@ -19,7 +19,7 @@ This custom Home Assistant integration connects your **iONA box** to Home Assist
 
 **Requirements**
 
-- Home Assistant 2023.1.0+
+- Home Assistant 2024.11.0+
 - HACS installed
 - iONA box reachable in your LAN (static IP recommended)
 - iONA app credentials (email + password)
@@ -53,7 +53,7 @@ This custom Home Assistant integration connects your **iONA box** to Home Assist
 
 ## Voraussetzungen
 
-- **Home Assistant** 2023.1.0 oder neuer
+- **Home Assistant** 2024.11.0 oder neuer
 - **[HACS](https://hacs.xyz/docs/use/download/download/)** installiert
 - **iONA Box** im Heimnetzwerk (feste IP-Adresse empfohlen)
 - **iONA-App Zugangsdaten** (E-Mail & Passwort)
@@ -164,7 +164,9 @@ Zeigt Momentanleistung, heutigen Verbrauch und einen 24-Stunden-Sparkline als Ku
 ```yaml
 type: custom:iona-card
 entity_power: sensor.stromzahler_momentanleistung
-entity_energy: sensor.stromzahler_gesamtverbrauch
+entity_consumed: sensor.stromzahler_gesamtverbrauch
+entity_fed_back: sensor.stromzahler_gesamteinspeisung
+entity_source: sensor.stromzahler_datenquelle
 # Optional – nur wenn "mein Strom Vision" aktiv ist:
 # entity_price: sensor.stromzahler_aktueller_preis
 ```
@@ -174,7 +176,9 @@ entity_energy: sensor.stromzahler_gesamtverbrauch
 | Konfigurationsschlüssel | Pflicht | Beschreibung |
 |---|---|---|
 | `entity_power` | ✅ | Sensor für Momentanleistung (W) |
-| `entity_energy` | ✅ | Sensor für Gesamtverbrauch (kWh) |
+| `entity_consumed` | ❌ | Sensor für Gesamtverbrauch (kWh); `entity_energy` funktioniert weiterhin als Alias |
+| `entity_fed_back` | ❌ | Sensor für Gesamteinspeisung (kWh) |
+| `entity_source` | ❌ | Sensor für die Datenquelle (LAN/WEB-Badge) |
 | `entity_price` | ❌ | Sensor für aktuellen Preis – nur mit Vision aktiviert |
 
 ### iONA Vision Tools Card (`iona-vision-card`)
@@ -304,7 +308,7 @@ Bei einem **HACS-Update** wird der gesamte Integrationsordner überschrieben. Da
 
 ### Sicherheit: Zugangsdaten
 
-Deine **Zugangsdaten (E-Mail & Passwort)** werden ausschließlich im **verschlüsselten Home Assistant ConfigEntry** gespeichert – nicht als Klartext in Dateien. Im Normalbetrieb wird ein **Refresh-Token** zur Authentifizierung genutzt. Nur wenn dieser abläuft, greift die Integration automatisch auf die gespeicherten Zugangsdaten zurück.
+Deine **Zugangsdaten (E-Mail & Passwort)** werden ausschließlich im **Home Assistant ConfigEntry** (`.storage/`, außerhalb des Integrationsordners) gespeichert – nicht als Klartext-Datei im Integrationsverzeichnis. Token- und Konfigurationsdateien werden mit restriktiven Dateirechten (nur Besitzer) angelegt. Im Normalbetrieb wird ein **Refresh-Token** zur Authentifizierung genutzt. Nur wenn dieser abläuft, greift die Integration automatisch auf die gespeicherten Zugangsdaten zurück.
 
 ---
 
