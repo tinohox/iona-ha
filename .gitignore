@@ -17,10 +17,6 @@ __pycache__/
 *.pyd
 .venv/
 
-# Vision-Module 
-app/get_spot_prices.py
-app/get_tariff_data.py
-
 # macOS
 .DS_Store
 

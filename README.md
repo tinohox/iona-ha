@@ -181,7 +181,7 @@ entity_energy: sensor.stromzahler_gesamtverbrauch
 
 Steuerungs-Kachel für die Vision-Optimierung: günstigste Startzeit (groß dargestellt), Durchschnittskosten, Zeitraum-Slider, Späteste-Startzeit-Slider, „danach wieder"-Slider, Neu-berechnen-Button und Nacht-Modus-Schalter.
 
-> ⚠️ **Nur relevant wenn Vision Tools aktiviert ist.** Ohne Vision-Zusatzmodule liefert diese Karte keine Daten.
+> ⚠️ **Nur relevant wenn Vision Tools aktiviert ist.** Ohne aktivierte Vision Tools liefert diese Karte keine Daten.
 
 ```yaml
 type: custom:iona-vision-card
@@ -217,9 +217,9 @@ entity_nacht: switch.mein_strom_vision_tools_vision_tools_nur_nachtstrom
 
 ## mein Strom Vision – dynamischer Stromtarif (optional)
 
-Die Integration unterstützt den dynamischen Stromtarif **mein Strom Vision** von enviaM. Diese Funktion erfordert zusätzliche Module, die **nicht im Repository enthalten** sind – sie werden separat bereitgestellt (z. B. im Rahmen des Tarifs).
+Die Integration unterstützt den dynamischen Stromtarif **mein Strom Vision** von enviaM. Die Vision-Funktionen sind **standardmäßig deaktiviert** und werden nur genutzt, wenn du sie in den Integrationsoptionen einschaltest – sinnvoll ist das nur mit einem aktiven „mein Strom Vision"-Vertrag.
 
-**Ohne Vision-Module** läuft die Integration vollständig normal mit allen Stromzähler-Sensoren. Vision-Funktionen werden automatisch übersprungen, wenn die Module fehlen.
+**Ohne aktiviertes Vision** läuft die Integration vollständig normal mit allen Stromzähler-Sensoren.
 
 ### Was ist „mein Strom Vision"?
 
@@ -277,8 +277,6 @@ automation:
 > 💡 Die passende **Lovelace-Karte** für die Steuerung ist die [iONA Vision Tools Card](#iona-vision-tools-card-iona-vision-card) – inklusive Slider, Berechnen-Button und Countdown zur Startzeit.
 
 ### Vision aktivieren
-
-Falls die Vision-Module vorhanden sind:
 
 1. **Einstellungen → Geräte & Dienste → iona-ha → Optionen**
 2. „mein Strom Vision aktivieren" einschalten (`vision_tariff` – Preissensor & Preisdaten)
