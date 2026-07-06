@@ -204,10 +204,13 @@ class IonaVisionCard extends HTMLElement {
           const dayEl = sr.querySelector('.sl-day[data-id="' + id + '"]');
           if (input && sr.activeElement !== input) {
             const hours = parseFloat(s.state);
-            input.min = 1;
-            input.max = 24;
-            input.step = 1;
-            const vc = Math.max(1, Math.min(24, hours));
+            // Range aus den Entity-Attributen (Datenlage), nicht hartkodiert
+            const mn = parseFloat((s.attributes && s.attributes.min) || 1);
+            const mx = parseFloat((s.attributes && s.attributes.max) || 24);
+            input.min = mn;
+            input.max = mx;
+            input.step = parseFloat((s.attributes && s.attributes.step) || 1);
+            const vc = Math.max(mn, Math.min(mx, hours));
             if (!isNaN(vc) && parseFloat(input.value) !== vc) {
               input.value = vc;
               this._updateSliderFill(input);

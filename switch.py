@@ -63,10 +63,11 @@ class IonaNachtModusSwitch(SwitchEntity):
         await self._hass.async_add_executor_job(set_nur_nacht, True)
         self._attr_is_on = True
 
+        # Explizite Parameter-Änderung → force (Freeze-Logik umgehen)
         manager = self._hass.data.get(DOMAIN, {}).get("manager")
         if manager is not None:
             try:
-                await manager._task_vision()
+                await manager._task_vision_force()
                 _LOGGER.debug("Vision-Neuberechnung: Nacht-Modus AN")
             except Exception:
                 _LOGGER.warning("Vision-Neuberechnung nach Nacht-Modus fehlgeschlagen")
@@ -76,10 +77,11 @@ class IonaNachtModusSwitch(SwitchEntity):
         await self._hass.async_add_executor_job(set_nur_nacht, False)
         self._attr_is_on = False
 
+        # Explizite Parameter-Änderung → force (Freeze-Logik umgehen)
         manager = self._hass.data.get(DOMAIN, {}).get("manager")
         if manager is not None:
             try:
-                await manager._task_vision()
+                await manager._task_vision_force()
                 _LOGGER.debug("Vision-Neuberechnung: Nacht-Modus AUS")
             except Exception:
                 _LOGGER.warning("Vision-Neuberechnung nach Nacht-Modus fehlgeschlagen")

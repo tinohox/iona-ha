@@ -114,11 +114,13 @@ class IonaStundenBlockNumber(NumberEntity):
                 new_vorausschau, int_value,
             )
 
-        # Vision sofort neu berechnen statt auf nächsten 5-Min-Zyklus zu warten
+        # Explizite Parameter-Änderung → force, sonst blockiert die
+        # Freeze-Logik die Neuberechnung solange die Startzeit in der
+        # Zukunft liegt
         manager = self._hass.data.get(DOMAIN, {}).get("manager")
         if manager is not None:
             try:
-                await manager._task_vision()
+                await manager._task_vision_force()
                 _LOGGER.debug("Vision-Neuberechnung nach Regler-Änderung auf %dh", int_value)
             except Exception:
                 _LOGGER.warning("Vision-Neuberechnung nach Regler-Änderung fehlgeschlagen")
@@ -211,11 +213,11 @@ class IonaVorausschauNumber(NumberEntity):
         self._attr_native_value = int_value
         self._cached_zeitraum = zeitraum
 
-        # Vision sofort neu berechnen
+        # Explizite Parameter-Änderung → force (Freeze-Logik umgehen)
         manager = self._hass.data.get(DOMAIN, {}).get("manager")
         if manager is not None:
             try:
-                await manager._task_vision()
+                await manager._task_vision_force()
                 _LOGGER.debug("Vision-Neuberechnung nach Vorausschau-Änderung auf %dh", int_value)
             except Exception:
                 _LOGGER.warning("Vision-Neuberechnung nach Vorausschau-Änderung fehlgeschlagen")
