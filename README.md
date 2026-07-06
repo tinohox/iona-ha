@@ -1,7 +1,7 @@
 # iONA für Home Assistant
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://hacs.xyz)
-[![Version](https://img.shields.io/badge/Version-2.1.0-blue.svg?style=for-the-badge)](https://github.com/tinohox/iona-ha/releases)
+[![Version](https://img.shields.io/badge/Version-2.1.1-blue.svg?style=for-the-badge)](https://github.com/tinohox/iona-ha/releases)
 [![Lizenz](https://img.shields.io/badge/Lizenz-MIT-green.svg?style=for-the-badge)](https://github.com/tinohox/iona-ha/blob/main/LICENSE)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.11+-blue.svg?style=for-the-badge&logo=homeassistant)](https://www.home-assistant.io/)
 
