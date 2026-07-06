@@ -31,6 +31,22 @@ class IonaCard extends HTMLElement {
     return v.toLocaleString('de-DE', { maximumFractionDigits: d, minimumFractionDigits: d });
   }
 
+  _moreInfo(entityId) {
+    if (!entityId) return;
+    this.dispatchEvent(new CustomEvent('hass-more-info', {
+      detail: { entityId }, bubbles: true, composed: true,
+    }));
+  }
+
+  // Element antippbar machen \u2192 \u00f6ffnet den HA More-Info-Dialog (mit Verlauf)
+  _bindMi(sel, entityId) {
+    if (!entityId) return;
+    const el = this.shadowRoot.querySelector(sel);
+    if (!el) return;
+    el.classList.add('tap');
+    el.addEventListener('click', () => this._moreInfo(entityId));
+  }
+
   _maybeUpdateHistory() {
     if (this._histFetching) return;
     const now = Date.now();
@@ -236,6 +252,8 @@ class IonaCard extends HTMLElement {
         '.cm{display:flex;justify-content:space-between;font-size:11px;color:var(--secondary-text-color);margin-bottom:4px}' +
         '.nd{text-align:center;font-size:12px;color:var(--secondary-text-color);margin:8px 0}' +
         '.sh{display:flex;justify-content:space-between;font-size:10px;color:var(--secondary-text-color);padding:0 2px 2px;margin-bottom:10px}' +
+        '.tap{cursor:pointer;transition:opacity .15s}' +
+        '.tap:hover{opacity:.75}' +
       '</style>' +
       '<ha-card>' +
         '<div class="hd">' +
@@ -246,13 +264,21 @@ class IonaCard extends HTMLElement {
           '<div class="pp">' + pa + ' ' + pl + '</div>' +
           '<div class="pr2"><span class="pn">' + pv + '</span><span class="pu">W</span></div>' +
         '</div>' +
-        (this._histCache ? this._sparkline(this._histCache) : '') +
+        (this._histCache ? '<div id="spark">' + this._sparkline(this._histCache) + '</div>' : '') +
         '<div class="st">' +
-          '<div class="si"><div class="sl ca">\u25b2 Verbrauch</div><div class="sv">' + this._fmt(co) + '<span class="su">kWh</span></div></div>' +
-          '<div class="si"><div class="sl fa">\u25bc Einspeisung</div><div class="sv">' + this._fmt(fb) + '<span class="su">kWh</span></div></div>' +
+          '<div class="si" id="si-co"><div class="sl ca">\u25b2 Verbrauch</div><div class="sv">' + this._fmt(co) + '<span class="su">kWh</span></div></div>' +
+          '<div class="si" id="si-fb"><div class="sl fa">\u25bc Einspeisung</div><div class="sv">' + this._fmt(fb) + '<span class="su">kWh</span></div></div>' +
         '</div>' +
         priceHtml +
       '</ha-card>';
+
+    // Werte antippbar: \u00f6ffnet den jeweiligen Sensor mit Verlauf
+    this._bindMi('.pw', this._c.entity_power);
+    this._bindMi('#spark', this._c.entity_power);
+    this._bindMi('#si-co', this._c.entity_consumed || this._c.entity_energy);
+    this._bindMi('#si-fb', this._c.entity_fed_back);
+    this._bindMi('.sb', this._c.entity_source);
+    this._bindMi('.pr', this._c.entity_price);
   }
 
   getCardSize() { return (this._c && this._c.entity_price) ? 5 : 4; }

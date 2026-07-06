@@ -123,6 +123,20 @@ class IonaVisionCard extends HTMLElement {
     if (this._h) this._h.callService(domain, service, data);
   }
 
+  _moreInfo(entityId) {
+    if (!entityId) return;
+    this.dispatchEvent(new CustomEvent('hass-more-info', {
+      detail: { entityId }, bubbles: true, composed: true,
+    }));
+  }
+
+  // Element antippbar machen → öffnet den HA More-Info-Dialog (mit Verlauf)
+  _bindMi(el, entityId) {
+    if (!el || !entityId) return;
+    el.classList.add('tap');
+    el.addEventListener('click', () => this._moreInfo(entityId));
+  }
+
   // ---- Inkrementelle Updates (kein re-render) --------------------------------
 
   _updateInfo() {
@@ -402,6 +416,8 @@ class IonaVisionCard extends HTMLElement {
         '.sw-knob{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .2s;display:block}' +
         '.sw-btn.sw-on .sw-knob{transform:translateX(18px)}' +
         '.nd{text-align:center;font-size:12px;color:var(--secondary-text-color);padding:24px 0}' +
+        '.tap{cursor:pointer;transition:opacity .15s}' +
+        '.tap:hover{opacity:.75}' +
         '.btn-row{display:flex;justify-content:flex-end;margin-top:4px;margin-bottom:8px}' +
         '.action-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 16px;border-radius:8px;border:1px solid var(--primary-color);background:transparent;color:var(--primary-color);font-size:13px;font-weight:600;cursor:pointer;transition:background .15s,color .15s}' +
         '.action-btn:hover{background:var(--primary-color);color:#fff}' +
@@ -422,6 +438,14 @@ class IonaVisionCard extends HTMLElement {
 
   _attachEvents() {
     const sr = this.shadowRoot;
+
+    // Werte antippbar: öffnet den jeweiligen Sensor/die Entität mit Verlauf
+    this._bindMi(sr.querySelector('#sz-time'), this._c.entity_startzeit);
+    this._bindMi(sr.querySelector('#sz-ts'),   this._c.entity_startzeit);
+    this._bindMi(sr.querySelector('.sz-meta'), this._c.entity_startzeit);
+    this._bindMi(sr.querySelector('#sz-cost'), this._c.entity_kosten);
+    sr.querySelectorAll('.sl-val').forEach(el => this._bindMi(el, el.dataset.id));
+    this._bindMi(sr.querySelector('.sw-lbl'),  this._c.entity_nacht);
 
     // Native range inputs – live-update der Anzeige + Gradient, Service-Call on change
     sr.querySelectorAll('.sl-input').forEach(input => {

@@ -161,6 +161,8 @@ Die Integration enthält zwei fertige **Custom Lovelace Cards**, die nach einem 
 
 Zeigt Momentanleistung, heutigen Verbrauch und einen 24-Stunden-Sparkline als Kurve. Optional: aktueller Strompreis und Preis-Balkendiagramm der letzten 12 Stunden (nur mit Vision).
 
+> 💡 **Antippbar:** Leistungsanzeige, Sparkline, Verbrauchs-/Einspeisungs-Kacheln, LAN/WEB-Badge und Preiszeile öffnen per Klick den jeweiligen Sensor mit Verlaufsgraph (More-Info-Dialog).
+
 ```yaml
 type: custom:iona-card
 entity_power: sensor.stromzahler_momentanleistung
@@ -184,6 +186,8 @@ entity_source: sensor.stromzahler_datenquelle
 ### iONA Vision Tools Card (`iona-vision-card`)
 
 Steuerungs-Kachel für die Vision-Optimierung: günstigste Startzeit (groß dargestellt), Durchschnittskosten, Zeitraum-Slider, Späteste-Startzeit-Slider, „danach wieder"-Slider, Neu-berechnen-Button und Nacht-Modus-Schalter.
+
+> 💡 **Antippbar:** Startzeit, Datum/Countdown, Kostenzeile sowie die Wert-Labels neben den Slidern öffnen per Klick die jeweilige Entität mit Verlaufsgraph (More-Info-Dialog). Die Slider selbst bleiben Steuerelemente.
 
 > ⚠️ **Nur relevant wenn Vision Tools aktiviert ist.** Ohne aktivierte Vision Tools liefert diese Karte keine Daten.
 
