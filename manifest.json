@@ -3,7 +3,7 @@
   "name": "iona-ha",
   "codeowners": ["@tinoHoX"],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": ["http"],
   "documentation": "https://github.com/tinohox/iona-ha",
   "integration_type": "hub",
   "iot_class": "local_polling",
