@@ -49,6 +49,7 @@ _DATA_DIR = os.path.join(_SCRIPT_DIR, "data")
 # Notification IDs
 _NOTIFY_AUTH_FAILED = "iona_auth_failed"
 _NOTIFY_BOX_UNREACHABLE = "iona_box_unreachable"
+_NOTIFY_VISION_NO_DATA = "iona_vision_no_data"
 
 # Anzahl aufeinanderfolgender Fehler bevor eine Notification erscheint.
 # Getrennt für LAN und Auth, weil die Abfrage-Intervalle stark variieren.
@@ -57,6 +58,9 @@ _FAIL_THRESHOLD_LAN = 6
 # Web-Token-Intervall ist deutlich größer (Minuten) → schon 2 Fehlversuche
 # bedeuten längere Auszeit; trotzdem mind. 2, um Einzel-Glitches zu ignorieren.
 _FAIL_THRESHOLD_AUTH = 2
+# Vision-Abrufe (Spotpreise 30 min, Tarif 24 h): 2 Fehlversuche in Folge
+# (≈ 1 h API-Störung bzw. dauerhaft leer bei Konten ohne Vision-Tarif).
+_FAIL_THRESHOLD_VISION = 2
 
 
 class IonaDataManager:
@@ -77,6 +81,8 @@ class IonaDataManager:
         # bei jedem 5-s-Tick erneut feuern.
         self._lan_unreachable_notified: bool = False
         self._auth_failed_notified: bool = False
+        self._vision_fail_count: int = 0
+        self._vision_no_data_notified: bool = False
 
     # ------------------------------------------------------------------ #
     #  Lifecycle                                                          #
@@ -159,6 +165,50 @@ class IonaDataManager:
             return age_seconds < max_age_minutes * 60
         except OSError:
             return False
+
+    def _handle_vision_fetch_result(self, ok: bool, source: str) -> None:
+        """Edge-getriggerte Notification, wenn enviaM keine Vision-Daten liefert.
+
+        Greift bei vorübergehenden API-Störungen ebenso wie bei Konten ohne
+        gebuchten "mein Strom Vision"-Tarif (die Schnittstelle liefert dann
+        dauerhaft keine Preisdaten). Wie bei der Box-Meldung wird nur EINMAL
+        beim Erreichen der Schwelle benachrichtigt; sobald wieder Daten
+        kommen, verschwindet die Meldung automatisch.
+        """
+        if ok:
+            if self._vision_no_data_notified:
+                pn_dismiss(self.hass, _NOTIFY_VISION_NO_DATA)
+                self._vision_no_data_notified = False
+                _LOGGER.info("Vision-Daten wieder verfügbar (%s)", source)
+            self._vision_fail_count = 0
+            return
+
+        self._vision_fail_count += 1
+        _LOGGER.debug(
+            "Vision-Abruf fehlgeschlagen (%s, %d/%d)",
+            source, self._vision_fail_count, _FAIL_THRESHOLD_VISION,
+        )
+        if (
+            self._vision_fail_count >= _FAIL_THRESHOLD_VISION
+            and not self._vision_no_data_notified
+        ):
+            pn_create(
+                self.hass,
+                (
+                    "Die enviaM-Schnittstelle liefert aktuell **keine Daten für "
+                    "'mein Strom Vision'** (Spotpreise/Tarifdaten).\n\n"
+                    "Mögliche Ursachen:\n"
+                    "- Die enviaM-API ist vorübergehend gestört – dann behebt sich "
+                    "das Problem in der Regel von selbst, diese Meldung verschwindet "
+                    "automatisch.\n"
+                    "- Für dein Konto ist **kein dynamischer Tarif 'mein Strom "
+                    "Vision'** gebucht – deaktiviere in diesem Fall die Vision-Option "
+                    "unter **Einstellungen → Geräte & Dienste → iona-ha → Optionen**."
+                ),
+                title="iONA: Vision-Preisdaten nicht verfügbar",
+                notification_id=_NOTIFY_VISION_NO_DATA,
+            )
+            self._vision_no_data_notified = True
 
     # ------------------------------------------------------------------ #
     #  Initiale Datenabfrage                                              #
@@ -349,6 +399,7 @@ class IonaDataManager:
             _LOGGER.debug("Modul get_spot_prices nicht verfügbar")
             return
         ok = await self.hass.async_add_executor_job(_run)
+        self._handle_vision_fetch_result(ok, "spot_prices")
         _LOGGER.info("Fertig: get_spot_prices → %s", "OK" if ok else "FEHLER")
 
     async def _task_spot_prices_force(self) -> None:
@@ -363,6 +414,7 @@ class IonaDataManager:
             _LOGGER.debug("Modul get_spot_prices nicht verfügbar")
             return
         ok = await self.hass.async_add_executor_job(_run)
+        self._handle_vision_fetch_result(ok, "spot_prices")
         _LOGGER.info("Fertig: get_spot_prices → %s", "OK" if ok else "FEHLER")
 
     async def _task_tariff_data(self) -> None:
@@ -382,6 +434,7 @@ class IonaDataManager:
             _LOGGER.debug("Modul get_tariff_data nicht verfügbar")
             return
         ok = await self.hass.async_add_executor_job(_run)
+        self._handle_vision_fetch_result(ok, "tariff_data")
         _LOGGER.info("Fertig: get_tariff_data → %s", "OK" if ok else "FEHLER")
 
     async def _task_tariff_data_force(self) -> None:
@@ -396,6 +449,7 @@ class IonaDataManager:
             _LOGGER.debug("Modul get_tariff_data nicht verfügbar")
             return
         ok = await self.hass.async_add_executor_job(_run)
+        self._handle_vision_fetch_result(ok, "tariff_data")
         _LOGGER.info("Fertig: get_tariff_data → %s", "OK" if ok else "FEHLER")
 
     async def _task_calc_preise(self) -> None:

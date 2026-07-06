@@ -46,7 +46,7 @@ This custom Home Assistant integration connects your **iONA box** to Home Assist
 | 💶 | **Dynamischer Stromtarif** – Optionale Unterstützung für „mein Strom Vision" von enviaM: Spotpreise in 15-Minuten-Auflösung, Brutto-Endkundenpreise und automatische Suche nach dem günstigsten Zeitfenster |
 | 🃏 | **Custom Lovelace Cards** – Fertige Kacheln für Verbrauch (mit 24-h-Sparkline) und Vision Tools, automatisch registriert |
 | 🛡️ | **HACS-Update-sicher** – Einstellungen und Tokens werden automatisch gesichert und nach Updates wiederhergestellt |
-| 🔔 | **Automatische Benachrichtigungen** – Hinweis in der HA-Oberfläche bei Authentifizierungsproblemen oder nicht erreichbarer iONA Box (Edge-Trigger: nur einmal pro Ausfall, automatisches Verschwinden bei Recovery) |
+| 🔔 | **Automatische Benachrichtigungen** – Hinweis in der HA-Oberfläche bei Authentifizierungsproblemen, nicht erreichbarer iONA Box oder fehlenden Vision-Preisdaten (Edge-Trigger: nur einmal pro Ausfall, automatisches Verschwinden bei Recovery) |
 | ⚙️ | **Einfache Einrichtung** – Konfiguration komplett über die Home Assistant UI |
 
 ---
@@ -340,6 +340,16 @@ Deine **Zugangsdaten (E-Mail & Passwort)** werden ausschließlich im **Home Assi
 - Zugangsdaten in den Optionen prüfen – stimmen E-Mail und Passwort?
 - Testweise in der iONA App oder Webapp einloggen
 - Die enviaM-API kann zeitweise nicht erreichbar sein – einfach 5–10 Minuten warten
+
+</details>
+
+<details>
+<summary><b>Benachrichtigung: Vision-Preisdaten nicht verfügbar</b></summary>
+
+- Die Integration zeigt eine **Benachrichtigung** an, wenn die enviaM-Schnittstelle wiederholt keine Spotpreis- oder Tarifdaten liefert
+- **Vorübergehende API-Störung?** Einfach abwarten – die Meldung verschwindet automatisch, sobald wieder Daten kommen
+- **Kein „mein Strom Vision"-Tarif gebucht?** Ohne dynamischen Tarif liefert die Schnittstelle dauerhaft keine Preisdaten – deaktiviere dann die Vision-Option unter **Einstellungen → Geräte & Dienste → iona-ha → Optionen**
+- Die Stromzähler-Sensoren (Verbrauch, Einspeisung, Leistung) laufen davon unabhängig normal weiter
 
 </details>
 
