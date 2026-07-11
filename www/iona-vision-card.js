@@ -26,9 +26,9 @@ class IonaVisionCard extends HTMLElement {
     const mn = 0, mx = 48, st = 1;
     const vc = Math.max(mn, Math.min(mx, v));
     const pct = (mx === mn) ? 0 : ((vc - mn) / (mx - mn) * 100).toFixed(1);
-    const label = vc === 0 ? 'aus' : vc + '\u202fh';
+    const label = vc === 0 ? 'sofort' : vc + '\u202fh';
     return '<div class="sl-row">' +
-      '<span class="sl-lbl">danach\u00a0wieder</span>' +
+      '<span class="sl-lbl">Neuberechnung<br>nach Ablauf</span>' +
       '<input type="range" class="sl-input" data-id="' + id + '"' +
         ' min="' + mn + '" max="' + mx + '" step="' + st + '" value="' + vc + '"' +
         ' style="--pct:' + pct + '%">' +
@@ -106,6 +106,22 @@ class IonaVisionCard extends HTMLElement {
     } catch(e) { return ''; }
   }
 
+  _endzeitText(sSt) {
+    if (!sSt || !sSt.attributes) return '';
+    const end = sSt.attributes.endzeit;
+    const nb  = sSt.attributes.naechste_berechnung;
+    if (!end) return '';
+    let t = 'Ende ' + this._fmtTime(end);
+    const endDay = this._fmtDay(end);
+    if (endDay && endDay !== 'heute') t += ' ' + endDay;
+    if (nb) {
+      t += ' · neue Suche ' + this._fmtTime(nb);
+      const nbDay = this._fmtDay(nb);
+      if (nbDay && nbDay !== 'heute') t += ' ' + nbDay;
+    }
+    return t;
+  }
+
   _fmtCountdown(iso) {
     if (!iso) return '';
     try {
@@ -151,11 +167,13 @@ class IonaVisionCard extends HTMLElement {
     const cdEl     = sr.querySelector('#sz-cd');
     const coEl     = sr.querySelector('#sz-cost');
     const tsEl     = sr.querySelector('#sz-ts');
+    const enEl     = sr.querySelector('#sz-end');
 
     if (timeEl) timeEl.textContent = this._fmtTime(startIso);
     if (dayEl)  dayEl.textContent  = this._fmtDay(startIso);
     if (cdEl)   cdEl.textContent   = this._fmtCountdown(startIso);
     if (tsEl)   tsEl.textContent   = this._fmtTimestamp(startIso);
+    if (enEl)   enEl.textContent   = this._endzeitText(sSt);
     if (coEl && kosten !== null && !isNaN(kosten)) {
       const stunden = (sSt && sSt.attributes && sSt.attributes.stunden_block)
         || (sKo && sKo.attributes && sKo.attributes.stunden_block) || '?';
@@ -175,7 +193,7 @@ class IonaVisionCard extends HTMLElement {
       const vc = Math.max(0, Math.min(48, v));
       if (!isNaN(vc) && parseFloat(input.value) !== vc) {
         input.value = vc;
-        if (valEl) valEl.textContent = vc === 0 ? 'aus' : vc + '\u202fh';
+        if (valEl) valEl.textContent = vc === 0 ? 'sofort' : vc + '\u202fh';
         this._updateSliderFill(input);
       }
     }
@@ -373,6 +391,7 @@ class IonaVisionCard extends HTMLElement {
               ? '\u00d8\u202f' + this._fmt(kosten * 100, 2) + '\u202fct/kWh\u202f\u00b7\u202f' + stunden + '\u202fh-Fenster'
               : '') +
           '</div>' +
+          '<div id="sz-end" class="sz-end">' + this._endzeitText(sSt) + '</div>' +
         '</div>'
       : '<div class="nd">Keine Vision-Daten verf\u00fcgbar</div>';
 
@@ -398,6 +417,7 @@ class IonaVisionCard extends HTMLElement {
         '.sz-day{font-size:13px;font-weight:600;color:var(--primary-text-color)}' +
         '.sz-cd{font-size:12px;color:var(--secondary-text-color)}' +
         '.sz-cost{font-size:13px;color:var(--secondary-text-color);margin-top:8px;min-height:1.4em}' +
+        '.sz-end{font-size:11px;color:var(--secondary-text-color);margin-top:2px}' +
         '.dv{height:1px;background:var(--divider-color,rgba(128,128,128,.2));margin:0 0 16px}' +
         '.sl-row{display:flex;align-items:center;gap:10px;margin-bottom:14px}' +
         '.sl-lbl{font-size:12px;color:var(--secondary-text-color);width:80px;flex-shrink:0}' +
@@ -444,6 +464,7 @@ class IonaVisionCard extends HTMLElement {
     this._bindMi(sr.querySelector('#sz-ts'),   this._c.entity_startzeit);
     this._bindMi(sr.querySelector('.sz-meta'), this._c.entity_startzeit);
     this._bindMi(sr.querySelector('#sz-cost'), this._c.entity_kosten);
+    this._bindMi(sr.querySelector('#sz-end'),  this._c.entity_endzeit || this._c.entity_startzeit);
     sr.querySelectorAll('.sl-val').forEach(el => this._bindMi(el, el.dataset.id));
     this._bindMi(sr.querySelector('.sw-lbl'),  this._c.entity_nacht);
 
@@ -479,14 +500,14 @@ class IonaVisionCard extends HTMLElement {
       });
     });
 
-    // danach-wieder Slider: Label zeigt 0 als 'aus'
+    // danach-wieder Slider: Label zeigt 0 als 'sofort'
     sr.querySelectorAll('.sl-input').forEach(input => {
       // bereits durch querySelectorAll oben behandelt – überschreibe Label für danach_wieder
       if (input.dataset.id === (this._c.entity_danach_wieder || '')) {
         const valEl = sr.querySelector('.sl-val[data-id="' + input.dataset.id + '"]');
         input.addEventListener('input', () => {
           const v = parseInt(input.value, 10);
-          if (valEl) valEl.textContent = v === 0 ? 'aus' : v + '\u202fh';
+          if (valEl) valEl.textContent = v === 0 ? 'sofort' : v + '\u202fh';
           this._updateSliderFill(input);
         });
       }
@@ -538,6 +559,7 @@ class IonaVisionCard extends HTMLElement {
     return {
       entity_startzeit:     'sensor.vision_tools_gunstigste_startzeit_fur_2h',
       entity_kosten:        'sensor.vision_tools_durchschnittskosten_fur_die_2h',
+      entity_endzeit:       'sensor.vision_tools_endzeit_fur_2h',
       entity_zeitraum:      'number.mein_strom_vision_tools_vision_tools_zeitraum',
       entity_vorausschau:   'number.mein_strom_vision_tools_vision_tools_vorausschau',
       entity_danach_wieder: 'number.mein_strom_vision_tools_vision_tools_danach_wieder',

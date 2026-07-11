@@ -158,7 +158,9 @@ class IonaSensor(CoordinatorEntity, Entity):
     VISION_TOOLS_KEYS = {
         "guenstigste_startzeit",
         "guenstigste_summe",
+        "endzeit",
     }
+    VISION_TIMESTAMP_KEYS = ("guenstigste_startzeit", "endzeit")
     VISION_KEYS = VISION_PRICE_KEYS | VISION_TOOLS_KEYS
 
     def __init__(self, coordinator, device_id: str, sensor_key: str, attributes: dict):
@@ -181,6 +183,7 @@ class IonaSensor(CoordinatorEntity, Entity):
                 "aktueller_preis": "Strompreis für die aktuelle 1/4h",
                 "guenstigste_startzeit": f"günstigste Startzeit für {stunden}h",
                 "guenstigste_summe": f"Durchschnittskosten für die {stunden}h",
+                "endzeit": f"Endzeit für {stunden}h",
             }
             if self._sensor_key in self.VISION_TOOLS_KEYS:
                 return f"Vision Tools – {name_map.get(self._sensor_key, self._sensor_key)}"
@@ -213,9 +216,7 @@ class IonaSensor(CoordinatorEntity, Entity):
             except (TypeError, ValueError):
                 return None
 
-        if self._is_vision_data() and self._sensor_key in (
-            "guenstigste_startzeit",
-        ):
+        if self._is_vision_data() and self._sensor_key in self.VISION_TIMESTAMP_KEYS:
             if value:
                 try:
                     dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -245,7 +246,7 @@ class IonaSensor(CoordinatorEntity, Entity):
             attrs["device_class"] = "monetary"
             attrs["state_class"] = "measurement"
             attrs.setdefault("unit_of_measurement", "€/kWh")
-        elif self._is_vision_data() and self._sensor_key == "guenstigste_startzeit":
+        elif self._is_vision_data() and self._sensor_key in self.VISION_TIMESTAMP_KEYS:
             attrs["device_class"] = "timestamp"
 
         if self._sensor_key == "aktueller_preis":
@@ -303,7 +304,7 @@ class IonaSensor(CoordinatorEntity, Entity):
             "guenstigste_summe",
         ):
             return "monetary"
-        if self._is_vision_data() and self._sensor_key == "guenstigste_startzeit":
+        if self._is_vision_data() and self._sensor_key in self.VISION_TIMESTAMP_KEYS:
             return "timestamp"
         return None
 
@@ -376,7 +377,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         for key in list(device_data.keys()):
             if key in ("device_id",) or key.endswith("_unit"):
                 continue
-            if is_vision and key in ("timestamp", "plz", "stunden_block"):
+            if is_vision and key in ("timestamp", "plz", "stunden_block", "naechste_berechnung"):
                 continue
             if not is_vision and (key == "timestamp" or key.endswith("_timestamp")):
                 continue
@@ -386,6 +387,12 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 continue
 
             sensors.append(IonaSensor(coordinator, device_id, key, device_data))
+
+        # Endzeit-Sensor auch anlegen, wenn das Feld noch nicht in der DB
+        # steht (alte vision_db vor dem ersten Durchlauf) – State bleibt
+        # unknown bis zur nächsten Berechnung
+        if is_vision and vision_tools_enabled and "endzeit" not in device_data:
+            sensors.append(IonaSensor(coordinator, device_id, "endzeit", device_data))
 
     async_add_entities(sensors, update_before_add=True)
 
@@ -410,7 +417,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         removed = 0
         for entity_id in list(entity_registry.entities.keys()):
             ent = entity_registry.entities.get(entity_id)
-            if ent and ent.unique_id and ("guenstigste_startzeit" in ent.unique_id or "guenstigste_summe" in ent.unique_id):
+            if ent and ent.unique_id and ("guenstigste_startzeit" in ent.unique_id or "guenstigste_summe" in ent.unique_id or "endzeit" in ent.unique_id):
                 entity_registry.async_remove(entity_id)
                 removed += 1
         if removed:

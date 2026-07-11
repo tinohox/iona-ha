@@ -248,7 +248,7 @@ class IonaDanachWiederNumber(NumberEntity):
 
     Legt fest, wie viele Stunden nach Ende des günstigen Zeitfensters
     automatisch ein neuer günstigster Zeitpunkt berechnet wird.
-    0 = deaktiviert (nur manuell per 'Berechnen'-Button).
+    0 = sofort (1 Minute nach Fensterende).
     """
 
     _attr_has_entity_name = True
@@ -304,6 +304,15 @@ class IonaDanachWiederNumber(NumberEntity):
         await self._hass.async_add_executor_job(set_danach_wieder_stunden, int_value)
         self._attr_native_value = int_value
         _LOGGER.info("danach_wieder auf %dh gesetzt", int_value)
+
+        # Kein force: die eingefrorene Startzeit bleibt erhalten, aber
+        # 'naechste_berechnung' und der Recalc-Timer werden aktualisiert
+        manager = self._hass.data.get(DOMAIN, {}).get("manager")
+        if manager is not None:
+            try:
+                await manager._task_vision()
+            except Exception:
+                _LOGGER.warning("Vision-Aktualisierung nach danach_wieder-Änderung fehlgeschlagen")
 
     async def async_update(self) -> None:
         """Aktualisiere den Wert."""

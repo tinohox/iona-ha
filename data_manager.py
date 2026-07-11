@@ -9,12 +9,17 @@ im HA Executor Thread-Pool (kein Blocking im Event-Loop).
 """
 
 import os
+import json
 import logging
 import threading
 from datetime import datetime, timedelta
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import (
+    async_track_point_in_time,
+    async_track_time_interval,
+)
+from homeassistant.util import dt as dt_util
 from homeassistant.components.persistent_notification import (
     async_create as pn_create,
     async_dismiss as pn_dismiss,
@@ -83,6 +88,8 @@ class IonaDataManager:
         self._auth_failed_notified: bool = False
         self._vision_fail_count: int = 0
         self._vision_no_data_notified: bool = False
+        # One-Shot-Timer für die minutengenaue Vision-Neuberechnung
+        self._vision_recalc_cancel = None
 
     # ------------------------------------------------------------------ #
     #  Lifecycle                                                          #
@@ -130,6 +137,9 @@ class IonaDataManager:
         for cancel in self._cancel_callbacks:
             cancel()
         self._cancel_callbacks.clear()
+        if self._vision_recalc_cancel:
+            self._vision_recalc_cancel()
+            self._vision_recalc_cancel = None
         _LOGGER.info("iona-ha Datenmanager gestoppt")
 
     # ------------------------------------------------------------------ #
@@ -487,6 +497,7 @@ class IonaDataManager:
         from .app.vision import run as _run
         ok = await self.hass.async_add_executor_job(_run, False)
         _LOGGER.debug("Fertig: vision → %s", "OK" if ok else "FEHLER")
+        await self._schedule_vision_recalc()
 
     async def _task_vision_force(self) -> None:
         """Vision-Berechnung erzwingen – immer neu berechnen (manueller Button)."""
@@ -505,3 +516,60 @@ class IonaDataManager:
         from .app.vision import run as _run
         ok = await self.hass.async_add_executor_job(_run, True)
         _LOGGER.info("Fertig: vision (force) → %s", "OK" if ok else "FEHLER")
+        await self._schedule_vision_recalc()
+
+    # ------------------------------------------------------------------ #
+    #  Vision-Recalc-Timer                                                #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _read_naechste_berechnung() -> str | None:
+        """Liest 'naechste_berechnung' aus vision_db.json (Executor)."""
+        filepath = os.path.join(_DATA_DIR, "vision_db.json")
+        if not os.path.isfile(filepath):
+            return None
+        try:
+            with open(filepath, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            items = list(data.get("_default", {}).values())
+            return items[0].get("naechste_berechnung") if items else None
+        except (json.JSONDecodeError, OSError, AttributeError):
+            return None
+
+    async def _schedule_vision_recalc(self) -> None:
+        """Armiert einen One-Shot-Timer auf 'naechste_berechnung'.
+
+        Der 5-Min-Task allein wäre bis zu 5 Minuten zu spät; der Timer
+        sorgt für die minutengenaue Neuberechnung nach Fensterende.
+        """
+        if self._vision_recalc_cancel:
+            self._vision_recalc_cancel()
+            self._vision_recalc_cancel = None
+
+        raw = await self.hass.async_add_executor_job(self._read_naechste_berechnung)
+        if not raw:
+            return
+
+        when = dt_util.parse_datetime(raw)
+        if when is None:
+            return
+        if when.tzinfo is None:
+            when = dt_util.as_local(when)
+        if when <= dt_util.now():
+            return
+
+        # Kleiner Puffer, damit der Freeze-Check (now >= recalc_time)
+        # beim Feuern sicher erfüllt ist.
+        when = when + timedelta(seconds=5)
+
+        async def _on_vision_recalc(_now) -> None:
+            self._vision_recalc_cancel = None
+            try:
+                await self._task_vision()
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Fehler bei geplanter Vision-Neuberechnung")
+
+        self._vision_recalc_cancel = async_track_point_in_time(
+            self.hass, _on_vision_recalc, when
+        )
+        _LOGGER.debug("Vision: Neuberechnung geplant für %s", when.isoformat())

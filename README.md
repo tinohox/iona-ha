@@ -185,7 +185,7 @@ entity_source: sensor.stromzahler_datenquelle
 
 ### iONA Vision Tools Card (`iona-vision-card`)
 
-Steuerungs-Kachel für die Vision-Optimierung: günstigste Startzeit (groß dargestellt), Durchschnittskosten, Zeitraum-Slider, Späteste-Startzeit-Slider, „danach wieder"-Slider, Neu-berechnen-Button und Nacht-Modus-Schalter.
+Steuerungs-Kachel für die Vision-Optimierung: günstigste Startzeit (groß dargestellt), Durchschnittskosten, Endzeit mit Zeitpunkt der nächsten Suche, Zeitraum-Slider, Späteste-Startzeit-Slider, „Neuberechnung nach Ablauf"-Slider, Neu-berechnen-Button und Nacht-Modus-Schalter.
 
 > 💡 **Antippbar:** Startzeit, Datum/Countdown, Kostenzeile sowie die Wert-Labels neben den Slidern öffnen per Klick die jeweilige Entität mit Verlaufsgraph (More-Info-Dialog). Die Slider selbst bleiben Steuerelemente.
 
@@ -195,6 +195,7 @@ Steuerungs-Kachel für die Vision-Optimierung: günstigste Startzeit (groß darg
 type: custom:iona-vision-card
 entity_startzeit: sensor.vision_tools_gunstigste_startzeit_fur_2h
 entity_kosten: sensor.vision_tools_durchschnittskosten_fur_die_2h
+entity_endzeit: sensor.vision_tools_endzeit_fur_2h
 entity_zeitraum: number.mein_strom_vision_tools_vision_tools_zeitraum
 entity_vorausschau: number.mein_strom_vision_tools_vision_tools_vorausschau
 entity_danach_wieder: number.mein_strom_vision_tools_vision_tools_danach_wieder
@@ -210,7 +211,8 @@ entity_nacht: switch.mein_strom_vision_tools_vision_tools_nur_nachtstrom
 | `entity_kosten` | ✅ | Sensor für Durchschnittskosten |
 | `entity_zeitraum` | ✅ | Number-Entität für Zeitraum (Stunden) |
 | `entity_vorausschau` | ✅ | Number-Entität für späteste Startzeit (Vorausschau) |
-| `entity_danach_wieder` | ❌ | Number-Entität für „danach wieder"-Wartezeit (0–48 h) |
+| `entity_endzeit` | ❌ | Sensor für das Ende des Zeitfensters (More-Info-Ziel der Endzeit-Zeile) |
+| `entity_danach_wieder` | ❌ | Number-Entität für die Wartezeit bis zur Neuberechnung nach Ablauf (0–48 h, `0` = sofort) |
 | `entity_berechnen` | ❌ | Button-Entität für manuelle Neuberechnung |
 | `entity_nacht` | ❌ | Switch für Nur-Nachtstrom-Modus (20–07 Uhr) |
 
@@ -255,18 +257,21 @@ Mit zusätzlich aktiviertem `vision_tools` erscheint das Gerät **„mein Strom 
 | Entität | Typ | Beschreibung |
 |---|---|---|
 | Günstigste Startzeit | Sensor | Startzeit des günstigsten Zeitfensters (Timestamp – ideal für Automatisierungen) |
+| Endzeit | Sensor | Ende des Zeitfensters (Startzeit + Zeitraum, Timestamp – z. B. zum automatischen Abschalten) |
 | Durchschnittskosten | Sensor | Ø-Preis im gefundenen Zeitfenster in €/kWh |
 | Zeitraum | Number | Gewünschte Nutzungsdauer des Verbrauchers (z. B. 2 h für einen Waschgang) |
 | Vorausschau | Number | Wie weit in die Zukunft nach einer Startzeit gesucht wird (max. begrenzt durch die verfügbaren Preisdaten) |
-| danach wieder | Number | Wartezeit nach Ablauf des Zeitfensters bis zur nächsten automatischen Suche (0–48 h, `0` = nur manuell per Button) |
+| danach wieder | Number | Wartezeit nach Ablauf des Zeitfensters bis zur nächsten automatischen Suche (0–48 h, `0` = sofort, 1 Minute nach Fensterende) |
 | Berechnen | Button | Manuelle Neuberechnung der optimalen Startzeit sofort auslösen |
 | Nur Nachtstrom | Switch | Suche auf Nachtzeiten (20–07 Uhr) einschränken |
 
 **So arbeitet die Optimierung:**
 
 - Eine einmal berechnete Startzeit bleibt **eingefroren**, solange sie in der Zukunft liegt – sie springt also nicht ständig um, während eine Automatisierung darauf wartet. Nur der aktuelle Preis wird weiter aktualisiert.
-- Ist das Zeitfenster abgelaufen, entscheidet **„danach wieder"**: Bei `0` passiert nichts, bis du den **Berechnen**-Button drückst. Bei z. B. `8` wird 8 Stunden nach Fenster-Ende automatisch das nächste günstige Zeitfenster gesucht.
-- Änderungen an **Zeitraum**, **Vorausschau** oder dem **Nachtstrom**-Schalter stoßen die Berechnung direkt an.
+- Ist das Zeitfenster abgelaufen, entscheidet **„danach wieder"**, wann automatisch neu gesucht wird: Bei `0` wird **sofort** (1 Minute nach Fensterende) das nächste günstige Zeitfenster berechnet. Bei z. B. `8` wartet die Suche 8 Stunden nach Fenster-Ende. Die Neuberechnung erfolgt minutengenau – nicht erst beim nächsten 5-Minuten-Takt.
+- Änderungen an **Zeitraum**, **Vorausschau** oder dem **Nachtstrom**-Schalter stoßen die Berechnung direkt an. Der **Berechnen**-Button erzwingt jederzeit eine sofortige Neuberechnung.
+
+> ⚠️ **Wichtig für Automatisierungen:** Bei `danach wieder = 0` springt die Startzeit direkt nach Fensterende auf das nächste günstige Fenster – unter Umständen nur wenige Minuten später. Deine Automatisierung sollte daher selbst prüfen, ob das Gerät überhaupt startbereit ist (z. B. Bedingung „Waschmaschine beladen/bereit"), sonst startet es unmittelbar wieder.
 
 **Beispiel-Automatisierung** – Steckdose zum günstigsten Zeitpunkt einschalten:
 
@@ -278,6 +283,15 @@ automation:
         at: sensor.vision_tools_gunstigste_startzeit_fur_2h
     action:
       - service: switch.turn_on
+        target:
+          entity_id: switch.steckdose_waschmaschine
+
+  - alias: "Steckdose am Ende des Zeitfensters ausschalten"
+    trigger:
+      - platform: time
+        at: sensor.vision_tools_endzeit_fur_2h
+    action:
+      - service: switch.turn_off
         target:
           entity_id: switch.steckdose_waschmaschine
 ```

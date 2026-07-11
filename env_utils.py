@@ -204,11 +204,11 @@ def set_vorausschau_stunden(value: int) -> bool:
 
 
 def get_danach_wieder_stunden() -> int:
-    """Gibt die konfigurierten 'danach wieder'-Stunden zurück (0 = deaktiviert).
+    """Gibt die konfigurierten 'danach wieder'-Stunden zurück.
 
-    Definiert, wie viele Stunden nach Ende des günstigen Zeitfensters
-    automatisch ein neuer günstigster Zeitpunkt berechnet wird.
-    0 bedeutet: keine automatische Neuberechnung (nur manuell per Button).
+    Wartezeit nach Ende des günstigen Zeitfensters bis zur automatischen
+    Neuberechnung. 0 bedeutet: sofort (1 Minute nach Fensterende),
+    >0 = so viele Stunden später.
     """
     try:
         val = int(read_env_value(ACCOUNT_ENV, "danach_wieder_stunden", "0"))
@@ -218,7 +218,10 @@ def get_danach_wieder_stunden() -> int:
 
 
 def set_danach_wieder_stunden(value: int) -> bool:
-    """Setzt die 'danach wieder'-Stunden in der account.env (min 0, max 48)."""
+    """Setzt die 'danach wieder'-Stunden in der account.env (min 0, max 48).
+
+    0 = Neuberechnung sofort (1 Minute nach Fensterende).
+    """
     data = read_env_file(ACCOUNT_ENV)
     data["danach_wieder_stunden"] = str(max(0, min(48, int(value))))
     return write_env_file(ACCOUNT_ENV, data)

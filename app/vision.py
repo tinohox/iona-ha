@@ -76,7 +76,11 @@ def _read_nur_nacht() -> bool:
 
 
 def _read_danach_wieder_stunden() -> int:
-    """Liest die 'danach wieder'-Stunden aus account.env (0 = deaktiviert)."""
+    """Liest die 'danach wieder'-Stunden aus account.env.
+
+    Wartezeit nach Fensterende bis zur automatischen Neuberechnung:
+    0 = sofort (1 Minute nach Fensterende), >0 = so viele Stunden später.
+    """
     try:
         with open(ACCOUNT_ENV, "r", encoding="utf-8") as fh:
             for line in fh:
@@ -102,11 +106,24 @@ def _lade_aktuelle_vision() -> dict | None:
         return None
 
 
-def _aktualisiere_preis(aktuelle: dict, aktueller_preis: float | None) -> None:
-    """Nur aktuellen Preis und Timestamp in der DB aktualisieren."""
+def _aktualisiere_preis(
+    aktuelle: dict,
+    aktueller_preis: float | None,
+    endzeit: datetime | None = None,
+    naechste_berechnung: datetime | None = None,
+) -> None:
+    """Nur aktuellen Preis und Timestamp in der DB aktualisieren.
+
+    endzeit/naechste_berechnung werden mitgeschrieben, damit die Felder
+    auch in älteren DBs auf jedem Freeze-Durchlauf entstehen.
+    """
     try:
         aktuelle["aktueller_preis"] = aktueller_preis
         aktuelle["timestamp"] = datetime.now().isoformat()
+        if endzeit is not None:
+            aktuelle["endzeit"] = endzeit.isoformat()
+        if naechste_berechnung is not None:
+            aktuelle["naechste_berechnung"] = naechste_berechnung.isoformat()
         os.makedirs(DATA_DIR, exist_ok=True)
         with TinyDB(VISION_DB) as db:
             db.truncate()
@@ -221,13 +238,15 @@ def run(force: bool = False) -> bool:
 
     force=False (Standard): Berechnung nur wenn nötig (Freeze-Logik).
       - Startzeit noch in der Zukunft → eingefroren, nur Preis aktualisieren.
-      - Startzeit abgelaufen + danach_wieder=0 → eingefroren.
-      - Startzeit abgelaufen + danach_wieder>0 + Wartezeit noch nicht vorbei → eingefroren.
+      - Fensterende + danach_wieder Stunden + 1 Minute noch nicht erreicht
+        → eingefroren (danach_wieder=0 heißt: sofort, 1 Min nach Fensterende).
+      - Danach → automatische Neuberechnung.
     force=True: Immer neu berechnen (manueller Button).
     """
     stunden = _read_stunden_block()
     vorausschau = _read_vorausschau_stunden()
     nur_nacht = _read_nur_nacht()
+    danach_wieder = _read_danach_wieder_stunden()
 
     preise = _lade_spotpreise()
     if not preise:
@@ -247,40 +266,35 @@ def run(force: bool = False) -> bool:
                     startzeit = datetime.fromisoformat(startzeit_str)
                     now = datetime.now().astimezone()
 
+                    window_end = startzeit + timedelta(hours=gespeicherter_block)
+                    recalc_time = window_end + timedelta(
+                        hours=danach_wieder, minutes=1
+                    )
+
                     if now < startzeit:
                         # Startzeit liegt noch in der Zukunft → eingefroren
                         _LOGGER.debug(
                             "Vision: Startzeit noch in der Zukunft (%s) – eingefroren",
                             startzeit.strftime("%d.%m. %H:%M"),
                         )
-                        _aktualisiere_preis(aktuelle, aktueller_preis)
+                        _aktualisiere_preis(
+                            aktuelle, aktueller_preis, window_end, recalc_time
+                        )
                         return True
 
-                    # Zeitfenster ist gestartet oder abgelaufen
-                    window_end = startzeit + timedelta(hours=gespeicherter_block)
-                    danach_wieder = _read_danach_wieder_stunden()
-
-                    if danach_wieder == 0:
-                        # Automatische Neuberechnung deaktiviert
+                    if now < recalc_time:
+                        # Wartezeit nach Fensterende noch nicht vorbei
                         _LOGGER.debug(
-                            "Vision: danach_wieder=0 – kein automatischer Neustart"
+                            "Vision: Warte auf Neuberechnung (%s) – eingefroren",
+                            recalc_time.strftime("%d.%m. %H:%M"),
                         )
-                        _aktualisiere_preis(aktuelle, aktueller_preis)
-                        return True
-
-                    auto_recalc_time = window_end + timedelta(hours=danach_wieder)
-                    if now < auto_recalc_time:
-                        # Wartezeit nach Fenster noch nicht vorbei
-                        _LOGGER.debug(
-                            "Vision: Warte auf danach_wieder (%dh nach %s) – eingefroren",
-                            danach_wieder,
-                            window_end.strftime("%d.%m. %H:%M"),
+                        _aktualisiere_preis(
+                            aktuelle, aktueller_preis, window_end, recalc_time
                         )
-                        _aktualisiere_preis(aktuelle, aktueller_preis)
                         return True
 
                     _LOGGER.info(
-                        "Vision: danach_wieder-Zeit erreicht – automatische Neuberechnung"
+                        "Vision: Neuberechnungszeit erreicht – automatische Neuberechnung"
                     )
                 except (ValueError, TypeError):
                     pass  # Ungültiger Timestamp → neu berechnen
@@ -292,6 +306,12 @@ def run(force: bool = False) -> bool:
     guenstigste_zeit = start["timestamp_str"] if start else None
     guenstigste_summe = round(avg, 5) if avg and avg != float("inf") else None
 
+    endzeit = None
+    naechste_berechnung = None
+    if start:
+        endzeit = start["timestamp"] + timedelta(hours=stunden)
+        naechste_berechnung = endzeit + timedelta(hours=danach_wieder, minutes=1)
+
     result = {
         "device_id": "vision_strom",
         "timestamp": datetime.now().isoformat(),
@@ -299,6 +319,10 @@ def run(force: bool = False) -> bool:
         "guenstigste_startzeit": guenstigste_zeit,
         "guenstigste_summe": guenstigste_summe,
         "stunden_block": stunden,
+        "endzeit": endzeit.isoformat() if endzeit else None,
+        "naechste_berechnung": (
+            naechste_berechnung.isoformat() if naechste_berechnung else None
+        ),
     }
 
     try:
