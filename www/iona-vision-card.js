@@ -17,6 +17,47 @@ class IonaVisionCard extends HTMLElement {
     }
     this._c = c;
     this._rendered = false; // Konfig geändert → neu aufbauen
+    this._entitiesResolved = false;
+  }
+
+  // Entity-IDs tolerant auflösen: Geräte in einem Bereich bekommen teils
+  // einen Präfix (z. B. number.energie_mein_strom_...), und der _fur_Xh-
+  // Suffix der Sensoren hängt vom Zeitraum bei der Erstellung ab. Wenn die
+  // konfigurierte ID nicht existiert, per Suffix-Vergleich die tatsächliche
+  // Entity gleicher Domain suchen.
+  _resolveEntities() {
+    if (this._entitiesResolved || !this._h || !this._c) return;
+    const keys = ['entity_startzeit', 'entity_kosten', 'entity_endzeit',
+                  'entity_zeitraum', 'entity_vorausschau', 'entity_danach_wieder',
+                  'entity_nacht', 'entity_berechnen'];
+    const states = this._h.states;
+    const norm = (s) => s.replace(/_fur_(die_)?\d+h$/, '');
+    const c = Object.assign({}, this._c);
+    let changed = false;
+    keys.forEach((k) => {
+      const id = c[k];
+      if (!id || states[id]) return;
+      const dot = id.indexOf('.');
+      if (dot < 0) return;
+      const domain = id.slice(0, dot + 1);
+      const obj = norm(id.slice(dot + 1));
+      const hit = Object.keys(states).find((sid) => {
+        if (sid.indexOf(domain) !== 0) return false;
+        const t = norm(sid.slice(domain.length));
+        return t === obj || t.endsWith('_' + obj) || obj.endsWith('_' + t);
+      });
+      if (hit) { c[k] = hit; changed = true; }
+    });
+    // Endzeit-Sensor automatisch finden, wenn nicht konfiguriert –
+    // macht die Endzeit-Zeile ohne YAML-Änderung antippbar (More-Info)
+    if (!c.entity_endzeit) {
+      const hit = Object.keys(states).find((sid) =>
+        sid.indexOf('sensor.') === 0 && sid.indexOf('vision_tools_endzeit') !== -1
+      );
+      if (hit) { c.entity_endzeit = hit; changed = true; }
+    }
+    if (changed) this._c = c;
+    this._entitiesResolved = true;
   }
 
   _buildDanachWiederSlider(id) {
@@ -47,6 +88,7 @@ class IonaVisionCard extends HTMLElement {
 
   set hass(h) {
     this._h = h;
+    this._resolveEntities();
     if (!this._rendered) {
       this._renderFull();
     } else {
@@ -555,16 +597,27 @@ class IonaVisionCard extends HTMLElement {
 
   getCardSize() { return 4; }
 
-  static getStubConfig() {
+  static getStubConfig(hass) {
+    // Tatsächliche Entity-IDs der Instanz suchen (Bereichs-Präfixe und
+    // _fur_Xh-Suffixe variieren); Fallback: Standard-IDs
+    const find = (domain, part, fallback) => {
+      if (hass && hass.states) {
+        const hit = Object.keys(hass.states).find((sid) =>
+          sid.indexOf(domain + '.') === 0 && sid.indexOf(part) !== -1
+        );
+        if (hit) return hit;
+      }
+      return fallback;
+    };
     return {
-      entity_startzeit:     'sensor.vision_tools_gunstigste_startzeit_fur_2h',
-      entity_kosten:        'sensor.vision_tools_durchschnittskosten_fur_die_2h',
-      entity_endzeit:       'sensor.vision_tools_endzeit_fur_2h',
-      entity_zeitraum:      'number.mein_strom_vision_tools_vision_tools_zeitraum',
-      entity_vorausschau:   'number.mein_strom_vision_tools_vision_tools_vorausschau',
-      entity_danach_wieder: 'number.mein_strom_vision_tools_vision_tools_danach_wieder',
-      entity_nacht:         'switch.mein_strom_vision_tools_vision_tools_nur_nachtstrom',
-      entity_berechnen:     'button.mein_strom_vision_tools_vision_tools_berechnen',
+      entity_startzeit:     find('sensor', 'vision_tools_gunstigste_startzeit', 'sensor.vision_tools_gunstigste_startzeit_fur_2h'),
+      entity_kosten:        find('sensor', 'vision_tools_durchschnittskosten', 'sensor.vision_tools_durchschnittskosten_fur_die_2h'),
+      entity_endzeit:       find('sensor', 'vision_tools_endzeit', 'sensor.vision_tools_endzeit_fur_2h'),
+      entity_zeitraum:      find('number', 'vision_tools_zeitraum', 'number.mein_strom_vision_tools_vision_tools_zeitraum'),
+      entity_vorausschau:   find('number', 'vision_tools_vorausschau', 'number.mein_strom_vision_tools_vision_tools_vorausschau'),
+      entity_danach_wieder: find('number', 'vision_tools_danach_wieder', 'number.mein_strom_vision_tools_vision_tools_danach_wieder'),
+      entity_nacht:         find('switch', 'vision_tools_nur_nachtstrom', 'switch.mein_strom_vision_tools_vision_tools_nur_nachtstrom'),
+      entity_berechnen:     find('button', 'vision_tools_berechnen', 'button.mein_strom_vision_tools_vision_tools_berechnen'),
     };
   }
 }

@@ -203,7 +203,7 @@ entity_berechnen: button.mein_strom_vision_tools_vision_tools_berechnen
 entity_nacht: switch.mein_strom_vision_tools_vision_tools_nur_nachtstrom
 ```
 
-> Die exakten Entitätsnamen hängen vom Gerätenamen in HA ab – im Zweifel unter **Einstellungen → Geräte & Dienste → iona-ha → Entitäten** nachsehen.
+> Die exakten Entitätsnamen hängen vom Gerätenamen in HA ab – im Zweifel unter **Einstellungen → Geräte & Dienste → iona-ha → Entitäten** nachsehen. Seit v2.2.1 löst die Card abweichende IDs automatisch auf (z. B. Bereichs-Präfixe wie `number.energie_mein_strom_...` oder andere `_fur_Xh`-Suffixe) und findet den Endzeit-Sensor auch ohne `entity_endzeit`-Eintrag.
 
 | Konfigurationsschlüssel | Pflicht | Beschreibung |
 |---|---|---|
