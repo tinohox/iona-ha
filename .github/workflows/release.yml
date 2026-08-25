@@ -1,0 +1,29 @@
+name: Release
+
+# Baut iona.zip und erstellt das GitHub-Release in einem Schritt,
+# damit das Release nie ohne sein Asset öffentlich ist (HACS zip_release).
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build iona.zip
+        run: zip -r iona.zip . -x ".git/*" -x ".github/*"
+
+      - name: Create release with asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" iona.zip \
+            --verify-tag \
+            --title "${{ github.ref_name }}" \
+            --generate-notes

@@ -1,6 +1,8 @@
 {
   "name": "iona-ha",
   "content_in_root": true,
+  "zip_release": true,
+  "filename": "iona.zip",
   "homeassistant": "2024.11.0",
   "country": "DE",
   "render_readme": true
