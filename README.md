@@ -42,7 +42,7 @@ This custom Home Assistant integration connects your **iONA box** to Home Assist
 |---|---|
 | ⚡ | **Live-Verbrauch** – Momentanleistung (Watt) direkt von der iONA Box (Standard: alle 5 Sekunden, einstellbar) |
 | 📊 | **Zählerstand** – Gesamtverbrauch & Einspeisung (kWh), kompatibel mit dem HA Energie-Dashboard |
-| 🔄 | **Dual-Datenquelle** – Primär lokal via LAN, automatischer Web-Fallback bei Verbindungsproblemen |
+| 🔄 | **Dual-Datenquelle** – Primär lokal via LAN, automatischer Web-Fallback bei Verbindungsproblemen oder veralteten Messwerten |
 | 💶 | **Dynamischer Stromtarif** – Optionale Unterstützung für „mein Strom Vision" von enviaM: Spotpreise in 15-Minuten-Auflösung, Brutto-Endkundenpreise und automatische Suche nach dem günstigsten Zeitfenster |
 | 🃏 | **Custom Lovelace Cards** – Fertige Kacheln für Verbrauch (mit 24-h-Sparkline) und Vision Tools, automatisch registriert |
 | 🛡️ | **HACS-Update-sicher** – Einstellungen und Tokens werden automatisch gesichert und nach Updates wiederhergestellt |
@@ -133,11 +133,18 @@ Der Sensor **„Stromzähler Datenquelle"** zeigt an, über welchen Weg die Zäh
 
 **So funktioniert die automatische Umschaltung:**
 
-Die Integration fragt die iONA Box **primär lokal über das LAN** ab – das ist schneller, genauer und erzeugt keine externe API-Last. Sollte die lokale Verbindung ausfallen (z. B. Box nicht erreichbar, Netzwerkprobleme), schaltet die Integration **automatisch auf die Web-API um**, damit die Daten weiterhin aktuell bleiben.
+Die Integration fragt die iONA Box **primär lokal über das LAN** ab – das ist schneller, genauer und erzeugt keine externe API-Last. Auf die Web-API wird in zwei Fällen umgeschaltet:
 
-Sobald die LAN-Verbindung wieder steht, wechselt die Datenquelle automatisch zurück auf **LAN**. Der Sensor zeigt also jederzeit transparent, woher die aktuellen Werte kommen.
+1. **Die Box ist nicht erreichbar** (ausgeschaltet, Netzwerkproblem, falsche IP-Adresse).
+2. **Die Box antwortet, liefert aber veraltete Messwerte.** Maßgeblich ist der Zeitstempel der Messwerte selbst – nicht die Frage, ob die Box überhaupt antwortet. Sind die Zählerwerte älter als 10 Minuten, wird zusätzlich die Web-API befragt.
+
+Sobald die LAN-Verbindung wieder aktuelle Werte liefert, wechselt die Datenquelle automatisch zurück auf **LAN**. Der Sensor zeigt also jederzeit transparent, woher die aktuellen Werte kommen.
 
 > 💡 **Idealzustand:** Die Datenquelle zeigt dauerhaft **LAN**. Wird dauerhaft **WEB** angezeigt, prüfe ob die iONA Box im Netzwerk erreichbar ist und die IP-Adresse in den Integrationsoptionen stimmt.
+
+**WLAN statt Kabel?** Funktioniert – die Box muss nur lokal erreichbar sein. Wichtig: **am WLAN hat die Box eine andere IP-Adresse als am LAN-Anschluss.** Steht in den Optionen noch die IP des Kabelanschlusses, ist der lokale Weg tot und es läuft nur der langsame Cloud-Weg.
+
+> ⚠️ **Der Fallback kann nicht frischer sein als die Cloud.** Die Web-API liefert nur, was die Box zuvor dorthin hochgeladen hat. Lädt die Box selten hoch (z. B. bei schwacher WLAN-Verbindung), sind die Werte dort schon alt – dann hilft kein häufigeres Abfragen, sondern nur ein funktionierender lokaler Zugriff.
 
 ---
 
@@ -345,8 +352,58 @@ Deine **Zugangsdaten (E-Mail & Passwort)** werden ausschließlich im **Home Assi
 <summary><b>Datenquelle zeigt dauerhaft „WEB"</b></summary>
 
 - **IP-Adresse korrekt?** Unter Einstellungen → Geräte & Dienste → iona-ha → Optionen prüfen
+- **Box im WLAN?** Dann hat sie eine **andere IP-Adresse** als am LAN-Anschluss – die WLAN-IP im Router nachsehen und eintragen
 - **iONA Box im Netzwerk erreichbar?** Die Box muss im selben Netzwerk wie Home Assistant sein
 - **Firewall/VLAN?** Lokaler Zugriff auf die Box darf nicht blockiert sein
+- **Direkt testen:** `curl -i http://<BOX-IP>/meter/now` von einem Rechner im selben Netz. Erwartet wird `200 OK`; bei `401` stimmt der Token nicht, bei Zeitüberschreitung ist die IP falsch oder der Zugriff blockiert
+
+</details>
+
+<details>
+<summary><b>Datenaktualität prüfen – Werte aktualisieren sich nicht oder zu selten</b></summary>
+
+Ob die angezeigten Werte aktuell sind, hängt an der Quelle, nicht am Abfrageintervall: Die Integration fragt die Box standardmäßig alle 5 Sekunden ab, kann aber nur speichern, was Box oder Cloud an neuen Messwerten liefern. Drei Schritte grenzen ein, wo es hängt.
+
+**1. Zeitstempel der Messwerte ansehen**
+
+Entwicklerwerkzeuge → Zustände → einen Zähler-Sensor auswählen (z. B. `sensor.stromzahler_gesamtverbrauch`) und in den **Attributen** nachsehen:
+
+```
+Gesamtverbrauch_timestamp: 2026-09-13T14:25:06+02:00
+Momentanleistung_timestamp: 2026-09-13T14:25:06+02:00
+source: LAN
+```
+
+Das ist der **Messzeitpunkt**, nicht der Abrufzeitpunkt – der Unterschied ist entscheidend. Liegen diese Zeiten deutlich zurück, liefert die Quelle selbst keine neuen Werte; ein häufigeres Abfragen ändert daran nichts.
+
+**2. Zustandswechsel im Log lesen**
+
+Einstellungen → System → Protokolle → nach `iona` filtern. Diese Meldungen stehen auf **INFO-Ebene** und sind ohne zusätzliche Konfiguration sichtbar:
+
+| Log-Meldung | Bedeutung |
+|-------------|-----------|
+| `Zählerdaten: Zustand … → LAN aktuell` | Alles in Ordnung, die Box liefert neue Messwerte |
+| `… → LAN ohne neue Messwerte` | Die Box **antwortet**, liefert aber keinen neueren Messwert |
+| `… → LAN nicht erreichbar` | Kein lokaler Zugriff – IP-Adresse und Netzwerk prüfen |
+| `… → WEB aktuell` | Der Cloud-Fallback liefert die Werte |
+| `… → WEB ohne neue Messwerte` | Auch die Cloud hat keinen neueren Wert – die Box lädt zu selten hoch |
+| `… → WEB fehlgeschlagen` | Die enviaM-API antwortet nicht oder der Token ist ungültig |
+
+Diese Meldungen erscheinen nur beim **Wechsel** des Zustands, nicht bei jedem Abruf – der normale 5-Sekunden-Betrieb bleibt still.
+
+Für die Fehlersuche im Detail zusätzlich in die `configuration.yaml`:
+
+```yaml
+logger:
+  logs:
+    custom_components.iona: debug
+```
+
+Damit wird auch protokolliert, welcher einzelne Messwert verworfen wurde und welches Zeitformat die Cloud liefert.
+
+**3. Lokalen Zugriff sicherstellen**
+
+Der lokale Weg ist der schnelle: er liefert im Sekundentakt. Steht im Log dauerhaft `LAN nicht erreichbar` oder zeigt die Datenquelle **WEB**, läuft nur der Cloud-Weg – und der ist nur so aktuell wie der letzte Upload der Box. Wie sich das beheben lässt, steht unter „Datenquelle zeigt dauerhaft WEB" oben; beachte dort besonders den Hinweis zur abweichenden WLAN-IP.
 
 </details>
 
