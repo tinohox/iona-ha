@@ -1,16 +1,32 @@
 """Verbrauchsdaten über die Web-API (n2g-iona) abrufen.
 
-Dient als Fallback, wenn die lokale iONA Box nicht erreichbar ist.
-Schreibt in meter_db.json.
+Dient als Fallback, wenn die lokale iONA Box nicht erreichbar ist oder
+veraltete Messwerte liefert. Schreibt in meter_db.json.
+
+Wichtig: Der Zeitstempel der Cloud wird unverändert gespeichert. Sein
+Format und seine Zeitzone sind nicht dokumentiert – würde man hier eine
+Zeitzone annehmen und dabei falsch raten, verschöbe sich der Wert um den
+Offset und blockierte je nach Richtung die LAN- oder die Web-Quelle für
+genau diese Zeitspanne. Den Vergleich übernimmt deshalb
+`fetch_utils.ts_allows_update`, das gemischte Zeitbasen erkennt.
 """
 
 import os
 import json
 import logging
-from datetime import datetime
 
 import requests
 from tinydb import TinyDB, Query
+
+try:  # als Paket (Home Assistant)
+    from .fetch_utils import FetchResult, newest, ts_allows_update, value_allows_update
+except ImportError:  # direkter Aufruf: python app/get_web_data.py
+    from fetch_utils import (  # type: ignore[no-redef]
+        FetchResult,
+        newest,
+        ts_allows_update,
+        value_allows_update,
+    )
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,6 +36,8 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "meter_db.json")
 
 CONSUMPTION_URL = "https://api.n2g-iona.net/v2/instantaneous"
+
+SOURCE = "WEB"
 
 
 def _read_env(filename: str) -> dict:
@@ -37,29 +55,32 @@ def _read_env(filename: str) -> dict:
     return env
 
 
-def _is_newer(new_ts, old_ts) -> bool:
-    """True, wenn new_ts neuer als old_ts ist.
-
-    Vergleicht als datetime (korrekt über Zeitzonen-/DST-Wechsel hinweg);
-    bei nicht parsebaren Werten Fallback auf direkten Vergleich wie bisher.
-    """
-    if not old_ts:
-        return True
-    if not new_ts:
+def _accept(key: str, entry: dict, new_value, new_ts) -> bool:
+    """Prüft, ob ein Messwert den gespeicherten ersetzen darf."""
+    if not ts_allows_update(new_ts, entry.get(f"{key}_timestamp")):
+        _LOGGER.debug(
+            "Web-Daten: %s verworfen – gespeicherter Zeitstempel %r ist nicht älter "
+            "als %r",
+            key, entry.get(f"{key}_timestamp"), new_ts,
+        )
         return False
-    try:
-        return datetime.fromisoformat(new_ts) > datetime.fromisoformat(old_ts)
-    except (ValueError, TypeError):
-        return new_ts > old_ts
+    if not value_allows_update(key, new_value, entry.get(key)):
+        _LOGGER.warning(
+            "Web-Daten: %s würde von %s auf %s sinken – verworfen "
+            "(Zählerstände dürfen nicht zurückgehen)",
+            key, entry.get(key), new_value,
+        )
+        return False
+    return True
 
 
-def run() -> bool:
+def run() -> FetchResult:
     """Web-Verbrauchsdaten abrufen und in DB schreiben."""
     web_env = _read_env("WebToken.env")
     access_token = web_env.get("ACCESS_TOKEN")
     if not access_token:
         _LOGGER.error("Web-Daten: ACCESS_TOKEN nicht vorhanden")
-        return False
+        return FetchResult(False, source=SOURCE, error="ACCESS_TOKEN fehlt")
 
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -70,12 +91,12 @@ def run() -> bool:
         response = requests.get(CONSUMPTION_URL, headers=headers, timeout=15)
         if response.status_code == 401:
             _LOGGER.warning("Web-Daten: 401 – Token ungültig")
-            return False
+            return FetchResult(False, source=SOURCE, error="401 Token ungültig")
         response.raise_for_status()
         data = response.json()
     except requests.RequestException as err:
         _LOGGER.error("Web-Daten: Fehler – %s", err)
-        return False
+        return FetchResult(False, source=SOURCE, error=str(err))
 
     try:
         elec = data["data"]["electricity"]
@@ -85,7 +106,16 @@ def run() -> bool:
         gesamtverbrauch_ts = elec["timestamp"]
     except (KeyError, TypeError, ZeroDivisionError) as err:
         _LOGGER.error("Web-Daten: Ungültiges Antwortformat – %s", err)
-        return False
+        return FetchResult(False, source=SOURCE, error=f"Antwortformat: {err}")
+
+    # Format/Zeitzone des Cloud-Zeitstempels sind nicht dokumentiert – für die
+    # Fehlersuche protokollieren, damit man ihn nicht raten muss.
+    _LOGGER.debug(
+        "Web-Daten: Zeitstempel aus der Cloud = %r (Typ %s)",
+        momentanleistung_ts, type(momentanleistung_ts).__name__,
+    )
+
+    measurement_time = newest(momentanleistung_ts)
 
     # In TinyDB schreiben
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -99,30 +129,31 @@ def run() -> bool:
             _LOGGER.warning("meter_db.json ist beschädigt – wird neu erstellt")
             os.remove(DB_PATH)
 
+    updated = False
+
     with TinyDB(DB_PATH) as db:
         result = db.search(Device.device_id == "Stromzaehler")
         if result:
             entry = result[0]
-            updated = False
 
-            if _is_newer(gesamtverbrauch_ts, entry.get("Gesamtverbrauch_timestamp")):
+            if _accept("Gesamtverbrauch", entry, gesamtverbrauch, gesamtverbrauch_ts):
                 entry["Gesamtverbrauch"] = gesamtverbrauch
                 entry["Gesamtverbrauch_timestamp"] = gesamtverbrauch_ts
                 updated = True
 
-            if _is_newer(momentanleistung_ts, entry.get("Momentanleistung_timestamp")):
+            if _accept("Momentanleistung", entry, momentanleistung, momentanleistung_ts):
                 entry["Momentanleistung"] = momentanleistung
                 entry["Momentanleistung_timestamp"] = momentanleistung_ts
                 updated = True
 
             if updated:
-                entry["source"] = "WEB"
+                entry["source"] = SOURCE
                 db.update(entry, Device.device_id == "Stromzaehler")
                 _LOGGER.debug("Web-Daten: DB aktualisiert (Quelle: WEB)")
         else:
             db.insert({
                 "device_id": "Stromzaehler",
-                "source": "WEB",
+                "source": SOURCE,
                 "Gesamtverbrauch": gesamtverbrauch,
                 "Gesamtverbrauch_unit": "kWh",
                 "Gesamtverbrauch_timestamp": gesamtverbrauch_ts,
@@ -130,9 +161,12 @@ def run() -> bool:
                 "Momentanleistung_unit": "W",
                 "Momentanleistung_timestamp": momentanleistung_ts,
             })
+            updated = True
             _LOGGER.info("Web-Daten: Neuer Eintrag erstellt")
 
-    return True
+    return FetchResult(
+        True, updated=updated, source=SOURCE, measurement_time=measurement_time
+    )
 
 
 if __name__ == "__main__":

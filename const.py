@@ -27,7 +27,14 @@ INTERVAL_SENSOR_UPDATE = 5       # 5 Sekunden
 FRESHNESS_SPOT_PRICES = 25       # Spotpreise: 25 Minuten
 FRESHNESS_TARIFF = 1380          # Tarif: 23 Stunden
 FRESHNESS_VISION = 4             # Vision: 4 Minuten
-FRESHNESS_METER = 1              # Meter-Daten: 1 Minute (für Web-Fallback)
+
+# Maximales Alter der Zähler-MESSWERTE (Sekunden), bevor der Web-Fallback
+# greift. Bewusst nicht die Änderungszeit von meter_db.json: die Datei wird
+# schon dann neu geschrieben, wenn sich nur die Momentanleistung bewegt –
+# ein seit Stunden eingefrorener Zählerstand bliebe dabei unbemerkt.
+# 10 Minuten, weil die Cloud selbst nur alle 5 Minuten abgefragt wird und
+# frischere Werte darüber gar nicht zu holen sind.
+MAX_METER_MEASUREMENT_AGE = 600
 
 # Lovelace Custom Cards
 LOVELACE_CARD_URL = "/iona_cards/iona-card.js"

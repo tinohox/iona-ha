@@ -37,7 +37,7 @@ from .const import (
     FRESHNESS_SPOT_PRICES,
     FRESHNESS_TARIFF,
     FRESHNESS_VISION,
-    FRESHNESS_METER,
+    MAX_METER_MEASUREMENT_AGE,
     DOMAIN,
     CONF_USERNAME,
     CONF_PASSWORD,
@@ -45,6 +45,7 @@ from .const import (
     CONF_INTERVAL_WEB,
 )
 from .env_utils import env_file_exists, is_vision_enabled, WEB_TOKEN_ENV, LAN_TOKEN_ENV
+from .app.fetch_utils import parse_ts
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -90,6 +91,9 @@ class IonaDataManager:
         self._vision_no_data_notified: bool = False
         # One-Shot-Timer für die minutengenaue Vision-Neuberechnung
         self._vision_recalc_cancel = None
+        # Letzter geloggter Zustand des Zählerpfads – damit Zustandswechsel
+        # auf INFO erscheinen, der 5-s-Normalbetrieb aber nicht ins Log spamt.
+        self._meter_state: str | None = None
 
     # ------------------------------------------------------------------ #
     #  Lifecycle                                                          #
@@ -176,6 +180,66 @@ class IonaDataManager:
         except OSError:
             return False
 
+    @staticmethod
+    def _meter_measurement_age() -> float | None:
+        """Alter des ältesten Zähler-Messwerts in Sekunden.
+
+        Geprüft werden nur die Felder, die der Web-Fallback auch liefern
+        kann (Momentanleistung, Gesamtverbrauch). Gesamteinspeisung bleibt
+        außen vor: bei Anlagen ohne Einspeisung steht das Export-Register
+        dauerhaft still und würde den Fallback permanent auslösen.
+
+        Bewusst der ÄLTESTE der beiden Werte – sonst maskiert die ständig
+        laufende Momentanleistung einen seit Stunden eingefrorenen
+        Zählerstand.
+
+        None = keine verwertbaren Messzeitpunkte (gilt als veraltet).
+        """
+        filepath = os.path.join(_DATA_DIR, "meter_db.json")
+        if not os.path.isfile(filepath):
+            return None
+        try:
+            with open(filepath, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (json.JSONDecodeError, OSError, ValueError):
+            return None
+
+        try:
+            entries = list(data.get("_default", {}).values())
+        except AttributeError:
+            return None
+
+        entry = next(
+            (e for e in entries
+             if isinstance(e, dict) and e.get("device_id") == "Stromzaehler"),
+            None,
+        )
+        if entry is None:
+            return None
+
+        ages: list[float] = []
+        for key in ("Momentanleistung", "Gesamtverbrauch"):
+            if key not in entry:
+                continue
+            stamp = parse_ts(entry.get(f"{key}_timestamp"))
+            if stamp is None:
+                return None
+            now = dt_util.now() if stamp.tzinfo else datetime.now()
+            ages.append((now - stamp).total_seconds())
+
+        return max(ages) if ages else None
+
+    def _log_meter_state(self, state: str, detail: str = "") -> None:
+        """Loggt den Zählerpfad-Zustand nur beim Wechsel (INFO)."""
+        if state == self._meter_state:
+            return
+        _LOGGER.info(
+            "Zählerdaten: Zustand %s → %s%s",
+            self._meter_state or "unbekannt", state,
+            f" ({detail})" if detail else "",
+        )
+        self._meter_state = state
+
     def _handle_vision_fetch_result(self, ok: bool, source: str) -> None:
         """Edge-getriggerte Notification, wenn enviaM keine Vision-Daten liefert.
 
@@ -240,10 +304,8 @@ class IonaDataManager:
 
         # 3. Zählerdaten holen (LAN bevorzugt, Web nur als Fallback)
         await self._task_lan_data()
-        lan_ok = await self.hass.async_add_executor_job(
-            self._is_data_fresh, "meter_db.json", FRESHNESS_METER
-        )
-        if not lan_ok:
+        age = await self.hass.async_add_executor_job(self._meter_measurement_age)
+        if age is None or age >= MAX_METER_MEASUREMENT_AGE:
             await self._task_web_data()
 
         # 4. Spotpreise IMMER holen beim Start
@@ -331,15 +393,26 @@ class IonaDataManager:
             with lock:
                 return _run()
 
-        ok = await self.hass.async_add_executor_job(_locked_run)
+        result = await self.hass.async_add_executor_job(_locked_run)
+        ok = bool(result)
 
         if ok:
+            if result.updated:
+                self._log_meter_state("LAN aktuell")
+            else:
+                # Box antwortet, liefert aber keine neuen Messwerte. Das ist
+                # der Fall, den ein reines True/False unsichtbar macht.
+                self._log_meter_state(
+                    "LAN ohne neue Messwerte",
+                    f"letzte Messzeit {result.measurement_time}",
+                )
             if self._lan_unreachable_notified:
                 pn_dismiss(self.hass, _NOTIFY_BOX_UNREACHABLE)
                 self._lan_unreachable_notified = False
             self._lan_fail_count = 0
         else:
             self._lan_fail_count += 1
+            self._log_meter_state("LAN nicht erreichbar", result.error or "")
             # Edge-Trigger: nur EINMAL beim Erreichen der Schwelle benachrichtigen,
             # nicht bei jedem 5-s-Fehlversuch (sonst Mail-Flut bei weitergeleiteten
             # persistent_notification-Events).
@@ -370,18 +443,25 @@ class IonaDataManager:
         _LOGGER.debug("Fertig: get_lan_data → %s", "OK" if ok else "FEHLER")
 
     async def _task_web_data(self) -> None:
-        """Web-Daten als Fallback wenn LAN nicht liefert.
+        """Web-Daten als Fallback, wenn die Zähler-MESSWERTE veraltet sind.
 
-        LAN schreibt alle 5s in meter_db.json.  Wenn die Datei älter als
-        1 Minute ist, liefert LAN offensichtlich nicht – dann Web-Fallback.
+        Der Auslöser ist das Alter der Messzeitpunkte in meter_db.json, nicht
+        die Änderungszeit der Datei: die wird schon durch die ständig
+        laufende Momentanleistung erneuert, während ein Zählerstand daneben
+        stundenlang stillstehen kann.
         """
         if not await self.hass.async_add_executor_job(env_file_exists, WEB_TOKEN_ENV):
             return
-        if await self.hass.async_add_executor_job(
-            self._is_data_fresh, "meter_db.json", FRESHNESS_METER
-        ):
+
+        age = await self.hass.async_add_executor_job(self._meter_measurement_age)
+        if age is not None and age < MAX_METER_MEASUREMENT_AGE:
             return
-        _LOGGER.info("Starte: get_web_data (LAN liefert nicht, Fallback)")
+
+        _LOGGER.info(
+            "Starte: get_web_data (Fallback – Messwerte %s)",
+            "ohne verwertbaren Zeitstempel" if age is None
+            else f"{int(age)} s alt",
+        )
         from .app.get_web_data import run as _run
         lock = self._meter_db_lock
 
@@ -389,8 +469,22 @@ class IonaDataManager:
             with lock:
                 return _run()
 
-        ok = await self.hass.async_add_executor_job(_locked_run)
-        _LOGGER.info("Fertig: get_web_data → %s", "OK" if ok else "FEHLER")
+        result = await self.hass.async_add_executor_job(_locked_run)
+        if not result:
+            self._log_meter_state("WEB fehlgeschlagen", result.error or "")
+        elif result.updated:
+            self._log_meter_state("WEB aktuell")
+        else:
+            # Cloud antwortet, hat aber selbst keinen neueren Messwert –
+            # dann kann der Fallback nicht helfen.
+            self._log_meter_state(
+                "WEB ohne neue Messwerte",
+                f"letzte Messzeit {result.measurement_time}",
+            )
+        _LOGGER.info(
+            "Fertig: get_web_data → %s (geschrieben: %s)",
+            "OK" if result else "FEHLER", result.updated,
+        )
 
     async def _task_spot_prices(self) -> None:
         """Spotpreise von enviaM abrufen – nur wenn Vision aktiv und veraltet."""

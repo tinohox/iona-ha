@@ -15,12 +15,31 @@ from zoneinfo import ZoneInfo
 import requests
 from tinydb import TinyDB, Query
 
+try:  # als Paket (Home Assistant)
+    from .fetch_utils import (
+        FetchResult,
+        newest,
+        ts_allows_update,
+        value_allows_update,
+    )
+except ImportError:  # direkter Aufruf: python app/get_lan_data.py
+    from fetch_utils import (  # type: ignore[no-redef]
+        FetchResult,
+        newest,
+        ts_allows_update,
+        value_allows_update,
+    )
+
 _LOGGER = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_DIR = os.path.join(BASE_DIR, "env")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "meter_db.json")
+
+TZ_LOCAL = ZoneInfo("Europe/Berlin")
+
+SOURCE = "LAN"
 
 
 def _read_env(filename: str) -> dict:
@@ -60,22 +79,6 @@ def _fetch_data(url: str, access_token: str) -> dict | None:
         return None
 
 
-def _is_newer(new_ts: str | None, old_ts: str | None) -> bool:
-    """True, wenn new_ts neuer als old_ts ist.
-
-    Vergleicht als datetime (korrekt über Zeitzonen-/DST-Wechsel hinweg);
-    bei nicht parsebaren Werten Fallback auf String-Vergleich wie bisher.
-    """
-    if not old_ts:
-        return True
-    if not new_ts:
-        return False
-    try:
-        return datetime.fromisoformat(new_ts) > datetime.fromisoformat(old_ts)
-    except (ValueError, TypeError):
-        return new_ts > old_ts
-
-
 def _parse_power(raw_value: int | None) -> int | None:
     """Momentanleistung korrigieren (Überlauf-Werte)."""
     if raw_value is None or raw_value == 0:
@@ -85,36 +88,52 @@ def _parse_power(raw_value: int | None) -> int | None:
     return raw_value
 
 
-def run() -> bool:
+def _accept(key: str, entry: dict, new_value, new_ts) -> bool:
+    """Prüft, ob ein Messwert den gespeicherten ersetzen darf.
+
+    Zwei unabhängige Bedingungen: der Zeitstempel muss den Wert als neuer
+    ausweisen (oder unvergleichbar sein), und bei Zählerständen darf der
+    Wert nicht sinken.
+    """
+    if not ts_allows_update(new_ts, entry.get(f"{key}_timestamp")):
+        return False
+    if not value_allows_update(key, new_value, entry.get(key)):
+        _LOGGER.warning(
+            "LAN-Daten: %s würde von %s auf %s sinken – verworfen "
+            "(Zählerstände dürfen nicht zurückgehen)",
+            key, entry.get(key), new_value,
+        )
+        return False
+    return True
+
+
+def run() -> FetchResult:
     """Hauptfunktion: Daten von der iONA Box lesen und in DB schreiben."""
     # Zugangsdaten laden
     secrets = _read_env("secrets-n2g.env")
     iona_box = secrets.get("IONA_BOX")
     if not iona_box:
         _LOGGER.error("IONA_BOX nicht in secrets-n2g.env gesetzt")
-        return False
+        return FetchResult(False, source=SOURCE, error="IONA_BOX nicht gesetzt")
 
     lan_env = _read_env("LanToken.env")
     data_raw = lan_env.get("DATA")
     if not data_raw:
         _LOGGER.debug("LAN-Token (DATA) nicht vorhanden – überspringe")
-        return False
+        return FetchResult(False, source=SOURCE, error="LAN-Token fehlt")
 
     try:
         data_dict = ast.literal_eval(data_raw)
         access_token = data_dict["user_lan_token"]
     except (ValueError, KeyError, TypeError) as err:
         _LOGGER.error("LAN-Token Parsing fehlgeschlagen: %s", err)
-        return False
+        return FetchResult(False, source=SOURCE, error=f"LAN-Token unlesbar: {err}")
 
     # Daten abrufen (Erreichbarkeit deckt der Request-Timeout selbst ab)
     url = f"http://{iona_box}/meter/now"
     data = _fetch_data(url, access_token)
     if data is None:
-        return False
-
-    # Zeitzone Europa/Berlin (MEZ/MESZ automatisch)
-    tz_local = ZoneInfo("Europe/Berlin")
+        return FetchResult(False, source=SOURCE, error="Box nicht erreichbar")
 
     # Momentanleistung
     try:
@@ -126,7 +145,7 @@ def run() -> bool:
 
     momentanleistung = _parse_power(power_raw)
     momentanleistung_ts = (
-        datetime.fromtimestamp(power_ts_epoch, tz=tz_local).isoformat()
+        datetime.fromtimestamp(power_ts_epoch, tz=TZ_LOCAL).isoformat()
         if power_ts_epoch
         else None
     )
@@ -141,7 +160,7 @@ def run() -> bool:
 
     gesamtverbrauch = import_raw / 1000 if import_raw not in (None, 0) else None
     gesamtverbrauch_ts = (
-        datetime.fromtimestamp(import_ts_epoch, tz=tz_local).isoformat()
+        datetime.fromtimestamp(import_ts_epoch, tz=TZ_LOCAL).isoformat()
         if import_ts_epoch
         else None
     )
@@ -156,9 +175,13 @@ def run() -> bool:
 
     gesamteinspeisung = export_raw / 1000 if export_raw not in (None, 0) else None
     gesamteinspeisung_ts = (
-        datetime.fromtimestamp(export_ts_epoch, tz=tz_local).isoformat()
+        datetime.fromtimestamp(export_ts_epoch, tz=TZ_LOCAL).isoformat()
         if export_ts_epoch
         else None
+    )
+
+    measurement_time = newest(
+        momentanleistung_ts, gesamtverbrauch_ts, gesamteinspeisung_ts
     )
 
     # In TinyDB schreiben
@@ -173,38 +196,40 @@ def run() -> bool:
             _LOGGER.warning("meter_db.json ist beschädigt – wird neu erstellt")
             os.remove(DB_PATH)
 
+    updated = False
+
     with TinyDB(DB_PATH) as db:
         result = db.search(Device.device_id == "Stromzaehler")
         if result:
             entry = result[0]
-            updated = False
 
-            if gesamtverbrauch is not None:
-                if _is_newer(gesamtverbrauch_ts, entry.get("Gesamtverbrauch_timestamp")):
-                    entry["Gesamtverbrauch"] = gesamtverbrauch
-                    entry["Gesamtverbrauch_timestamp"] = gesamtverbrauch_ts
-                    updated = True
+            if gesamtverbrauch is not None and _accept(
+                "Gesamtverbrauch", entry, gesamtverbrauch, gesamtverbrauch_ts
+            ):
+                entry["Gesamtverbrauch"] = gesamtverbrauch
+                entry["Gesamtverbrauch_timestamp"] = gesamtverbrauch_ts
+                updated = True
 
-            if gesamteinspeisung is not None:
-                old_val = entry.get("Gesamteinspeisung")
-                if _is_newer(gesamteinspeisung_ts, entry.get("Gesamteinspeisung_timestamp")):
-                    if not (old_val and old_val > 0 and gesamteinspeisung == 0):
-                        entry["Gesamteinspeisung"] = gesamteinspeisung
-                        entry["Gesamteinspeisung_timestamp"] = gesamteinspeisung_ts
-                        updated = True
+            if gesamteinspeisung is not None and _accept(
+                "Gesamteinspeisung", entry, gesamteinspeisung, gesamteinspeisung_ts
+            ):
+                entry["Gesamteinspeisung"] = gesamteinspeisung
+                entry["Gesamteinspeisung_timestamp"] = gesamteinspeisung_ts
+                updated = True
 
-            if momentanleistung is not None:
-                if _is_newer(momentanleistung_ts, entry.get("Momentanleistung_timestamp")):
-                    entry["Momentanleistung"] = momentanleistung
-                    entry["Momentanleistung_timestamp"] = momentanleistung_ts
-                    updated = True
+            if momentanleistung is not None and _accept(
+                "Momentanleistung", entry, momentanleistung, momentanleistung_ts
+            ):
+                entry["Momentanleistung"] = momentanleistung
+                entry["Momentanleistung_timestamp"] = momentanleistung_ts
+                updated = True
 
             if updated:
-                entry["source"] = "LAN"
+                entry["source"] = SOURCE
                 db.update(entry, Device.device_id == "Stromzaehler")
                 _LOGGER.debug("LAN-Daten: DB aktualisiert (Quelle: LAN)")
         else:
-            insert_data = {"device_id": "Stromzaehler", "source": "LAN"}
+            insert_data = {"device_id": "Stromzaehler", "source": SOURCE}
             if gesamtverbrauch is not None:
                 insert_data.update(
                     Gesamtverbrauch=gesamtverbrauch,
@@ -224,9 +249,12 @@ def run() -> bool:
                     Gesamteinspeisung_timestamp=gesamteinspeisung_ts,
                 )
             db.insert(insert_data)
+            updated = True
             _LOGGER.info("LAN-Daten: Neuer Zähler-Eintrag erstellt")
 
-    return True
+    return FetchResult(
+        True, updated=updated, source=SOURCE, measurement_time=measurement_time
+    )
 
 
 if __name__ == "__main__":
