@@ -48,12 +48,44 @@ def run() -> bool:
 
     try:
         response = requests.get(TARIFF_URL, headers=headers, timeout=15)
+    except requests.RequestException as err:
+        _LOGGER.error("Tarifdaten: Fehler beim Abruf – %s", err)
+        return False
+
+    # 501 und 404 heißen hier nicht "Server kaputt": Der Endpunkt antwortet so,
+    # wenn für das angemeldete Konto kein dynamischer Tarif hinterlegt ist.
+    # Gemessen: mit gebuchtem Tarif kommt 200, ohne oder mit ungültigem Token
+    # kommt 403 – ein 501 ist also nichts, was sich durch erneutes Anmelden
+    # beheben ließe.
+    if response.status_code in (404, 501):
+        _LOGGER.warning(
+            "Tarifdaten: enviaM liefert für dieses Konto keine dynamischen "
+            "Preise (HTTP %d). Das ist zu erwarten, wenn kein Tarif "
+            "'mein Strom Vision' gebucht ist – die Vision-Option lässt sich "
+            "dann unter Einstellungen → Geräte & Dienste → iona-ha → Optionen "
+            "abschalten.",
+            response.status_code,
+        )
+        return False
+
+    if response.status_code == 403:
+        _LOGGER.warning(
+            "Tarifdaten: Zugriff abgelehnt (HTTP 403) – der Web-Token ist "
+            "vermutlich abgelaufen. Der nächste Versuch läuft automatisch."
+        )
+        return False
+
+    try:
         response.raise_for_status()
     except requests.RequestException as err:
         _LOGGER.error("Tarifdaten: Fehler beim Abruf – %s", err)
         return False
 
-    data = response.json()
+    try:
+        data = response.json()
+    except ValueError as err:
+        _LOGGER.error("Tarifdaten: Antwort ist kein gültiges JSON – %s", err)
+        return False
 
     # Atomar speichern
     os.makedirs(DATA_DIR, exist_ok=True)

@@ -97,6 +97,21 @@ _LAN_STATE_BY_REASON = {
 }
 
 
+def _brutto_db_usable() -> bool:
+    """True, wenn die Brutto-Preisdatei existiert und Inhalt hat.
+
+    Eine reine isfile()-Prüfung reichte nicht: Eine 0 Byte große Datei ließ
+    die Vision-Berechnung anlaufen und alle fünf Minuten mit
+    "Expecting value: line 1 column 1" im Log auflaufen, statt sauber zu
+    überspringen.
+    """
+    path = os.path.join(_DATA_DIR, "spotpreise_brutto_db.json")
+    try:
+        return os.path.getsize(path) > 0
+    except OSError:
+        return False
+
+
 def _lan_failure_notification(reason: str, ip: str) -> tuple[str, str]:
     """Benachrichtigungstext passend zur Fehlerursache.
 
@@ -844,13 +859,8 @@ class IonaDataManager:
         if not await self.hass.async_add_executor_job(is_vision_enabled):
             return
 
-        def _check_brutto():
-            return os.path.isfile(
-                os.path.join(_DATA_DIR, "spotpreise_brutto_db.json")
-            )
-
-        if not await self.hass.async_add_executor_job(_check_brutto):
-            _LOGGER.debug("Überspringe Vision: spotpreise_brutto_db.json fehlt")
+        if not await self.hass.async_add_executor_job(_brutto_db_usable):
+            _LOGGER.debug("Überspringe Vision: spotpreise_brutto_db.json fehlt oder ist leer")
             return
         _LOGGER.debug("Starte: vision (force=False)")
         from .app.vision import run as _run
@@ -863,13 +873,10 @@ class IonaDataManager:
         if not await self.hass.async_add_executor_job(is_vision_enabled):
             return
 
-        def _check_brutto():
-            return os.path.isfile(
-                os.path.join(_DATA_DIR, "spotpreise_brutto_db.json")
+        if not await self.hass.async_add_executor_job(_brutto_db_usable):
+            _LOGGER.debug(
+                "Überspringe Vision (force): spotpreise_brutto_db.json fehlt oder ist leer"
             )
-
-        if not await self.hass.async_add_executor_job(_check_brutto):
-            _LOGGER.debug("Überspringe Vision (force): spotpreise_brutto_db.json fehlt")
             return
         _LOGGER.info("Starte: vision (force=True)")
         from .app.vision import run as _run

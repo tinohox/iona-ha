@@ -517,6 +517,84 @@ def test_failure_causes():
     get_lan_data.requests.get = _fake_get
 
 
+def test_tariff_status_handling():
+    section("F · Tarif-Abruf unterscheidet die Statuscodes")
+    import get_tariff_data
+    import requests
+
+    tmp = tempfile.mkdtemp()
+    env, data = os.path.join(tmp, "env"), os.path.join(tmp, "data")
+    os.makedirs(env)
+    os.makedirs(data)
+    with open(os.path.join(env, "WebToken.env"), "w") as f:
+        f.write("ACCESS_TOKEN=abc\n")
+    get_tariff_data.ENV_DIR, get_tariff_data.DATA_DIR = env, data
+    get_tariff_data.DB_PATH = os.path.join(data, "tariff_db.json")
+
+    class R:
+        def __init__(self, code, payload=None):
+            self.status_code, self._p = code, payload
+
+        def json(self):
+            if self._p is None:
+                raise ValueError("no json")
+            return self._p
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise requests.RequestException("%d" % self.status_code)
+
+    def serve(code, payload=None):
+        get_tariff_data.requests.get = lambda url, **kw: R(code, payload)
+
+    serve(501)
+    check("501 wird abgefangen (kein Tarif gebucht)", get_tariff_data.run(), False)
+    check("keine Datei geschrieben", os.path.isfile(get_tariff_data.DB_PATH), False)
+
+    serve(403)
+    check("403 wird abgefangen (Token)", get_tariff_data.run(), False)
+
+    serve(500)
+    check("echter Serverfehler bleibt Fehler", get_tariff_data.run(), False)
+
+    serve(200, None)
+    check("200 mit kaputtem JSON stürzt nicht ab", get_tariff_data.run(), False)
+
+    serve(200, {"variantKey": "EV_103_V1"})
+    check("200 wird gespeichert", get_tariff_data.run(), True)
+    check("Datei vorhanden", os.path.isfile(get_tariff_data.DB_PATH), True)
+    check("kein .tmp-Rest",
+          [f for f in os.listdir(data) if f.endswith(".tmp")], [])
+
+
+def test_brutto_db_guard():
+    section("F · Leere Brutto-Preisdatei wird übersprungen")
+    _stub_homeassistant()
+    import types as _t
+    pkg = _t.ModuleType("iona")
+    pkg.__path__ = [REPO]
+    sys.modules["iona"] = pkg
+    from iona.data_manager import _brutto_db_usable, _DATA_DIR
+
+    path = os.path.join(_DATA_DIR, "spotpreise_brutto_db.json")
+    backup = path + ".testbackup"
+    had = os.path.isfile(path)
+    if had:
+        os.replace(path, backup)
+    try:
+        check("fehlende Datei -> nicht nutzbar", _brutto_db_usable(), False)
+        open(path, "w").close()
+        check("0-Byte-Datei -> nicht nutzbar", _brutto_db_usable(), False)
+        with open(path, "w") as f:
+            json.dump({"_default": {}}, f)
+        check("Datei mit Inhalt -> nutzbar", _brutto_db_usable(), True)
+    finally:
+        if os.path.isfile(path):
+            os.remove(path)
+        if had:
+            os.replace(backup, path)
+
+
 def main():
     test_value_guard()
     test_no_key_ever_removed()
@@ -531,6 +609,8 @@ def main():
     test_quarantine_instead_of_delete()
     test_overflow_escape()
     test_failure_causes()
+    test_tariff_status_handling()
+    test_brutto_db_guard()
 
     print()
     if _FAILS:

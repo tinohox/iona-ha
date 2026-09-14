@@ -18,7 +18,13 @@ INTERVAL_WEB_DATA = 300          # 5 Minuten
 INTERVAL_WEB_TOKEN = 1800        # 30 Minuten
 INTERVAL_LAN_TOKEN = 5160        # 86 Minuten
 INTERVAL_SPOT_PRICES = 1800      # 30 Minuten
-INTERVAL_TARIFF_DATA = 86400     # 24 Stunden
+# Der Takt ist bewusst von der Frische entkoppelt: Der Tarif ändert sich
+# höchstens täglich (FRESHNESS_TARIFF = 23 h verhindert überflüssige Abrufe),
+# aber ein FEHLGESCHLAGENER Abruf darf nicht bis zum nächsten Tag nachwirken.
+# Vorher stand hier 86400 – eine einzelne Störung der enviaM-API beim Start
+# ließ den Preissensor dadurch 24 Stunden lang fehlen, auf einer Neu-
+# installation entstand er gar nicht erst.
+INTERVAL_TARIFF_DATA = 3600      # stündlicher Versuch, Abruf nur wenn veraltet
 INTERVAL_CALC_PREISE = 1800      # 30 Minuten
 INTERVAL_VISION = 300            # 5 Minuten
 INTERVAL_SENSOR_UPDATE = 5       # 5 Sekunden
