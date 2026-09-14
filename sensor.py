@@ -35,6 +35,12 @@ SPOTPREISE_DB_PATH = os.path.join(BASE_DIR, "app", "data", "spotpreise_brutto_db
 
 SCAN_INTERVAL = timedelta(seconds=INTERVAL_SENSOR_UPDATE)
 
+# Präfix der Zähler-unique_ids (siehe IonaSensor.unique_id). Wird gebraucht,
+# um aus dem Entity-Registry zurückzulesen, welche Zähler-Entitäten es schon
+# gab – siehe _restore_known_meter_sensors().
+METER_UID_PREFIX = "iona_meter_"
+METER_DEVICE_ID = "Stromzaehler"
+
 
 # -------------------- Sync Reader (im Executor aufrufen) --------------------
 
@@ -338,6 +344,62 @@ class IonaSensor(CoordinatorEntity, Entity):
         return None
 
 
+def _restore_known_meter_sensors(hass, entry, coordinator, sensors, logger) -> int:
+    """Legt Zähler-Entitäten an, die es laut Registry schon gab.
+
+    Entitäten entstehen nur beim Setup und nur aus den Keys, die in diesem
+    Moment in meter_db.json stehen. Fehlt ein Key gerade – frisch angelegte DB
+    nach einem HACS-Update, oder Gesamteinspeisung nachts bei 0 – wäre die
+    Entität samt Historie, Langzeitstatistik und Energie-Dashboard-Zuordnung
+    weg. Deshalb wird zusätzlich alles angelegt, was im Entity-Registry
+    bereits existiert.
+
+    Vom Nutzer gelöschte Entitäten stehen nicht mehr im Registry und bleiben
+    gelöscht.
+    """
+    from homeassistant.helpers import entity_registry as er
+
+    registry = er.async_get(hass)
+
+    meter_device_id = next(
+        (
+            device_id
+            for device_id, data in coordinator.data.items()
+            if isinstance(data, dict) and data.get("device_id") == METER_DEVICE_ID
+        ),
+        METER_DEVICE_ID,
+    )
+    meter_data = coordinator.data.get(meter_device_id) or {}
+
+    known = {sensor.unique_id for sensor in sensors}
+    restored = 0
+
+    for ent in er.async_entries_for_config_entry(registry, entry.entry_id):
+        unique_id = ent.unique_id or ""
+        if ent.domain != "sensor" or not unique_id.startswith(METER_UID_PREFIX):
+            continue
+        # Format: iona_meter_<key>_<8 Hex>
+        key = unique_id[len(METER_UID_PREFIX):-9]
+        if not key or key in meter_data:
+            continue
+
+        sensor = IonaSensor(coordinator, meter_device_id, key, meter_data)
+        if sensor.unique_id != unique_id or sensor.unique_id in known:
+            continue
+
+        sensors.append(sensor)
+        known.add(sensor.unique_id)
+        restored += 1
+
+    if restored:
+        logger.info(
+            "%d Zähler-Entität(en) aus dem Registry wiederhergestellt "
+            "(Key fehlt derzeit in meter_db.json)",
+            restored,
+        )
+    return restored
+
+
 # -------------------- Setup --------------------
 
 
@@ -393,6 +455,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
         # unknown bis zur nächsten Berechnung
         if is_vision and vision_tools_enabled and "endzeit" not in device_data:
             sensors.append(IonaSensor(coordinator, device_id, "endzeit", device_data))
+
+    _restore_known_meter_sensors(hass, entry, coordinator, sensors, logger)
 
     async_add_entities(sensors, update_before_add=True)
 

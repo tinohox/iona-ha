@@ -8,6 +8,11 @@ import os
 import logging
 import requests
 
+try:  # als Paket (Home Assistant)
+    from .fetch_utils import write_env_atomic
+except ImportError:  # direkter Aufruf: python app/get_lan_token.py
+    from fetch_utils import write_env_atomic  # type: ignore[no-redef]
+
 _LOGGER = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -33,11 +38,7 @@ def _read_env(filename: str) -> dict:
 
 def _save_token(token_data: dict) -> None:
     filepath = os.path.join(ENV_DIR, "LanToken.env")
-    os.makedirs(ENV_DIR, exist_ok=True)
-    with open(filepath, "w", encoding="utf-8") as fh:
-        for key, value in token_data.items():
-            fh.write(f"{key.upper()}={value}\n")
-    os.chmod(filepath, 0o600)
+    write_env_atomic(filepath, token_data)
     _LOGGER.debug("LAN-Token gespeichert in %s", filepath)
 
 

@@ -28,13 +28,25 @@ FRESHNESS_SPOT_PRICES = 25       # Spotpreise: 25 Minuten
 FRESHNESS_TARIFF = 1380          # Tarif: 23 Stunden
 FRESHNESS_VISION = 4             # Vision: 4 Minuten
 
-# Maximales Alter der Zähler-MESSWERTE (Sekunden), bevor der Web-Fallback
-# greift. Bewusst nicht die Änderungszeit von meter_db.json: die Datei wird
-# schon dann neu geschrieben, wenn sich nur die Momentanleistung bewegt –
-# ein seit Stunden eingefrorener Zählerstand bliebe dabei unbemerkt.
-# 10 Minuten, weil die Cloud selbst nur alle 5 Minuten abgefragt wird und
-# frischere Werte darüber gar nicht zu holen sind.
+# Maximales Alter des Zählerstands (Sekunden), bevor die Cloud zum Abgleich
+# herangezogen wird. Gemeint ist NICHT die Änderungszeit von meter_db.json und
+# auch nicht der Abrufzeitpunkt: Box und Cloud stempeln beide "jetzt", daraus
+# lässt sich kein Stillstand ablesen. Seit Gesamtverbrauch_timestamp nur noch
+# bei echter Werteänderung vorrückt, misst das Alter "seit wann steht dieser
+# Zählerstand" – und genau das ist das Signal.
+# 10 Minuten, weil die Cloud ohnehin nur alle 5 Minuten abgefragt wird.
 MAX_METER_MEASUREMENT_AGE = 600
+
+# LAN gilt als stumm, wenn so lange kein Abruf mehr geglückt ist. Nicht fest
+# 60 s: der Options-Flow lässt interval_lan bis 60 s zu, ein starrer Wert
+# würde solche Anlagen dauerhaft als stumm einstufen.
+MAX_LAN_SILENCE_MIN = 60
+LAN_SILENCE_FACTOR = 6
+
+# Mindestabstand zwischen zwei Cloud-Abrufen, unabhängig von interval_web
+# (der Options-Flow lässt dort 10 s zu). Der Web-Token wird mit den
+# Vision-Abrufen geteilt – ein Rate-Limit träfe sonst auch die Preisdaten.
+MIN_WEB_FETCH_INTERVAL = 120
 
 # Lovelace Custom Cards
 LOVELACE_CARD_URL = "/iona_cards/iona-card.js"

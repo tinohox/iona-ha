@@ -6,10 +6,18 @@ das von HACS-Updates nicht betroffen ist.
 """
 
 import os
+import json
 import shutil
 import logging
 
 _LOGGER = logging.getLogger(__name__)
+
+# Dateien, die eine Plausibilitätsprüfung durchlaufen, bevor sie ein
+# vorhandenes Backup überschreiben dürfen. meter_db.json trägt den
+# Zählerstand: geht er verloren, fehlt value_allows_update() der
+# Vergleichswert, und Home Assistant bucht den nächsten Wert bei
+# state_class total_increasing komplett als Verbrauch.
+_GUARDED_DATA_FILES = ("meter_db.json",)
 
 
 def get_backup_dir(hass):
@@ -74,35 +82,61 @@ def restore_env_from_backup(hass) -> bool:
     if not os.path.exists(data_dir):
         os.makedirs(data_dir, exist_ok=True)
 
-    data_files = [
-        f
-        for f in os.listdir(data_dir)
-        if os.path.isfile(os.path.join(data_dir, f))
-        and f.endswith(".json")
-    ]
-
-    if not data_files and os.path.exists(data_backup_dir):
-        backup_data_files = [
-            f
-            for f in os.listdir(data_backup_dir)
-            if os.path.isfile(os.path.join(data_backup_dir, f))
-            and f.endswith(".json")
-        ]
-        if backup_data_files:
-            try:
-                for filename in backup_data_files:
-                    src = os.path.join(data_backup_dir, filename)
-                    dst = os.path.join(data_dir, filename)
-                    shutil.copy2(src, dst)
-                _LOGGER.info(
-                    "data/ Dateien aus Backup wiederhergestellt: %d Dateien",
-                    len(backup_data_files),
-                )
+    # Pro fehlender Datei wiederherstellen, nicht alles-oder-nichts.
+    # Die alte Regel "nur wenn data/ komplett leer ist" griff praktisch nie:
+    # spotpreise_db.json & Co. sind nach dem ersten Abruf sofort wieder da,
+    # und meter_db.json – die einzige Datei mit unersetzbarem Inhalt – blieb
+    # dann auf der Strecke.
+    if os.path.exists(data_backup_dir):
+        try:
+            for filename in os.listdir(data_backup_dir):
+                if not filename.endswith(".json"):
+                    continue
+                src = os.path.join(data_backup_dir, filename)
+                dst = os.path.join(data_dir, filename)
+                if not os.path.isfile(src) or os.path.exists(dst):
+                    continue
+                shutil.copy2(src, dst)
+                _LOGGER.info("data/%s aus Backup wiederhergestellt", filename)
                 restored = True
-            except OSError as err:
-                _LOGGER.error("Fehler beim Wiederherstellen von data/: %s", err)
+        except OSError as err:
+            _LOGGER.error("Fehler beim Wiederherstellen von data/: %s", err)
 
     return restored
+
+
+def _is_plausible(path: str, filename: str) -> bool:
+    """Prüft, ob eine Datendatei brauchbaren Inhalt hat.
+
+    Verhindert, dass ein frisch entstandener Rumpf-Datensatz ein
+    vollständiges Backup überschreibt (z. B. direkt nach einem HACS-Update).
+    """
+    if filename != "meter_db.json":
+        return True
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        entries = list(data.get("_default", {}).values())
+    except (OSError, ValueError, AttributeError):
+        return False
+    return any(
+        isinstance(e, dict)
+        and e.get("device_id") == "Stromzaehler"
+        and e.get("Gesamtverbrauch") is not None
+        for e in entries
+    )
+
+
+def _copy_atomic(src: str, dst: str) -> None:
+    """Kopiert über eine temporäre Datei und os.replace().
+
+    Ohne das läge das Backup während des Kopierens unvollständig vor – genau
+    das Fenster, in dem ein Neustart es unbrauchbar macht. Das .tmp-Suffix
+    ist wichtig: der Restore und das Backup filtern auf .json.
+    """
+    tmp = dst + ".tmp"
+    shutil.copy2(src, tmp)
+    os.replace(tmp, dst)
 
 
 def backup_env_files(hass) -> bool:
@@ -121,46 +155,53 @@ def backup_env_files(hass) -> bool:
     total = 0
 
     # --- env/ sichern ---
+    # Wie beim data-Backup unten: kein vorheriges Leeren. Nach einem
+    # HACS-Update ist app/env/ gelöscht, Home Assistant läuft aber bis zum
+    # Neustart weiter – ein Backup-Lauf in diesem Fenster hätte die gesicherten
+    # Zugangsdaten und Tokens mitgenommen.
     if os.path.exists(env_dir):
         try:
-            for filename in os.listdir(env_backup_dir):
-                if filename == ".gitkeep":
-                    continue
-                filepath = os.path.join(env_backup_dir, filename)
-                if os.path.isfile(filepath):
-                    os.remove(filepath)
-
             for filename in os.listdir(env_dir):
                 if filename == ".gitkeep":
                     continue
                 src = os.path.join(env_dir, filename)
                 if (
-                    os.path.isfile(src)
-                    and filename.endswith(".env")
-                    and os.path.getsize(src) > 0
+                    not os.path.isfile(src)
+                    or not filename.endswith(".env")
+                    or os.path.getsize(src) == 0
                 ):
-                    shutil.copy2(src, os.path.join(env_backup_dir, filename))
-                    total += 1
+                    continue
+                _copy_atomic(src, os.path.join(env_backup_dir, filename))
+                total += 1
         except OSError as err:
             _LOGGER.error("Fehler beim env-Backup: %s", err)
 
     # --- data/ sichern ---
+    # Bewusst OHNE vorheriges Leeren des Backup-Verzeichnisses: Ein
+    # HACS-Update löscht app/data/, Home Assistant läuft aber weiter. Das
+    # nächste stündliche Backup hätte sonst das noch gute Backup durch den
+    # frisch entstandenen, unvollständigen Stand ersetzt – und der Restore
+    # beim nächsten Start hätte nichts Brauchbares mehr gefunden.
+    # Ein Backup wird nur überschrieben, nie gelöscht.
     if os.path.exists(data_dir):
         try:
-            for filename in os.listdir(data_backup_dir):
-                filepath = os.path.join(data_backup_dir, filename)
-                if os.path.isfile(filepath):
-                    os.remove(filepath)
-
             for filename in os.listdir(data_dir):
                 src = os.path.join(data_dir, filename)
                 if (
-                    os.path.isfile(src)
-                    and filename.endswith(".json")
-                    and os.path.getsize(src) > 0
+                    not os.path.isfile(src)
+                    or not filename.endswith(".json")
+                    or os.path.getsize(src) == 0
                 ):
-                    shutil.copy2(src, os.path.join(data_backup_dir, filename))
-                    total += 1
+                    continue
+                if filename in _GUARDED_DATA_FILES and not _is_plausible(src, filename):
+                    _LOGGER.warning(
+                        "data/%s wirkt unvollständig – vorhandenes Backup "
+                        "bleibt unangetastet",
+                        filename,
+                    )
+                    continue
+                _copy_atomic(src, os.path.join(data_backup_dir, filename))
+                total += 1
         except OSError as err:
             _LOGGER.error("Fehler beim data-Backup: %s", err)
 

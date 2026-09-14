@@ -12,6 +12,7 @@ import os
 import json
 import logging
 import threading
+import time
 from datetime import datetime, timedelta
 
 from homeassistant.core import HomeAssistant
@@ -38,6 +39,9 @@ from .const import (
     FRESHNESS_TARIFF,
     FRESHNESS_VISION,
     MAX_METER_MEASUREMENT_AGE,
+    MAX_LAN_SILENCE_MIN,
+    LAN_SILENCE_FACTOR,
+    MIN_WEB_FETCH_INTERVAL,
     DOMAIN,
     CONF_USERNAME,
     CONF_PASSWORD,
@@ -45,7 +49,13 @@ from .const import (
     CONF_INTERVAL_WEB,
 )
 from .env_utils import env_file_exists, is_vision_enabled, WEB_TOKEN_ENV, LAN_TOKEN_ENV
-from .app.fetch_utils import parse_ts
+from .app.fetch_utils import (
+    ERR_AUTH,
+    ERR_CONFIG,
+    ERR_HTTP,
+    ERR_UNREACHABLE,
+    parse_ts,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,6 +66,8 @@ _DATA_DIR = os.path.join(_SCRIPT_DIR, "data")
 _NOTIFY_AUTH_FAILED = "iona_auth_failed"
 _NOTIFY_BOX_UNREACHABLE = "iona_box_unreachable"
 _NOTIFY_VISION_NO_DATA = "iona_vision_no_data"
+_NOTIFY_METER_STALE = "iona_meter_stale"
+_NOTIFY_METER_STANDOFF = "iona_meter_standoff"
 
 # Anzahl aufeinanderfolgender Fehler bevor eine Notification erscheint.
 # Getrennt für LAN und Auth, weil die Abfrage-Intervalle stark variieren.
@@ -67,6 +79,77 @@ _FAIL_THRESHOLD_AUTH = 2
 # Vision-Abrufe (Spotpreise 30 min, Tarif 24 h): 2 Fehlversuche in Folge
 # (≈ 1 h API-Störung bzw. dauerhaft leer bei Konten ohne Vision-Tarif).
 _FAIL_THRESHOLD_VISION = 2
+
+# Nach einem abgelehnten LAN-Token frühestens so oft neu anfordern. Ohne das
+# liefe bei jedem 5-s-Abruf ein Token-Request gegen die Cloud.
+_LAN_TOKEN_RETRY_COOLDOWN = 300
+
+# So lange muss ein abgelehnter Zählerstand-Rückgang anhalten, bevor die
+# Integration von einem Zählertausch ausgeht und den Nutzer informiert.
+# Kurze Ausreißer (ein einzelner Fehlwert der Box) sollen nicht melden.
+_METER_STANDOFF_SECONDS = 6 * 3600
+
+_LAN_STATE_BY_REASON = {
+    ERR_UNREACHABLE: "LAN nicht erreichbar",
+    ERR_AUTH: "LAN weist den Token ab",
+    ERR_HTTP: "LAN antwortet fehlerhaft",
+    ERR_CONFIG: "LAN nicht konfiguriert",
+}
+
+
+def _lan_failure_notification(reason: str, ip: str) -> tuple[str, str]:
+    """Benachrichtigungstext passend zur Fehlerursache.
+
+    Ein 401 heißt: Die Box ist erreichbar, akzeptiert aber den Token nicht.
+    Der bisherige Einheitstext ("prüfe Strom, Netzwerk, IP") war in dem Fall
+    in jedem Satz falsch und ließ Nutzer an der falschen Stelle suchen.
+    """
+    if reason == ERR_AUTH:
+        return (
+            "iONA: Anmeldung an der Box abgelehnt",
+            (
+                f"Die iONA Box unter **{ip}** ist erreichbar, weist den "
+                "Zugangs-Token der Integration aber ab (HTTP 401).\n\n"
+                "Die Integration fordert automatisch einen neuen Token an. "
+                "Bleibt die Meldung bestehen, prüfe deine Zugangsdaten unter "
+                "**Einstellungen → Geräte & Dienste → iona-ha → Optionen** – "
+                "der Token für die Box wird über das enviaM-Konto ausgestellt."
+            ),
+        )
+    if reason == ERR_HTTP:
+        return (
+            "iONA: Box antwortet fehlerhaft",
+            (
+                f"Die iONA Box unter **{ip}** ist erreichbar, liefert aber "
+                "keine verwertbare Antwort.\n\n"
+                "Häufigste Ursache: Unter dieser IP-Adresse antwortet ein "
+                "anderes Gerät. Prüfe die Adresse unter **Einstellungen → "
+                "Geräte & Dienste → iona-ha → Optionen**; bei DHCP kann sie "
+                "sich geändert haben."
+            ),
+        )
+    if reason == ERR_CONFIG:
+        return (
+            "iONA: Lokaler Zugriff nicht eingerichtet",
+            (
+                "Für den lokalen Zugriff auf die iONA Box fehlen Angaben "
+                "(IP-Adresse oder Token).\n\n"
+                "Bitte prüfe die Einstellungen unter **Einstellungen → "
+                "Geräte & Dienste → iona-ha → Optionen**."
+            ),
+        )
+    return (
+        "iONA: Box nicht erreichbar",
+        (
+            f"Die iONA Box unter **{ip}** ist nicht erreichbar. "
+            "Bitte prüfe, ob die Box eingeschaltet und im Netzwerk ist, "
+            "und ob die IP-Adresse unter "
+            "**Einstellungen → Geräte & Dienste → iona-ha → Optionen** "
+            "korrekt ist.\n\n"
+            "Hängt die Box im WLAN, hat sie dort eine **andere IP-Adresse** "
+            "als am LAN-Anschluss."
+        ),
+    )
 
 
 class IonaDataManager:
@@ -94,6 +177,21 @@ class IonaDataManager:
         # Letzter geloggter Zustand des Zählerpfads – damit Zustandswechsel
         # auf INFO erscheinen, der 5-s-Normalbetrieb aber nicht ins Log spamt.
         self._meter_state: str | None = None
+        # Monotone Uhr: wann ist zuletzt ein LAN-Abruf geglückt. Bewusst im
+        # Speicher statt aus der Datei abgeleitet – die Zeitstempel in
+        # meter_db.json beantworten seit 2.3.0 eine andere Frage
+        # ("seit wann steht dieser Wert").
+        self._lan_last_success: float | None = None
+        self._max_lan_silence: int = MAX_LAN_SILENCE_MIN
+        self._web_last_run: float | None = None
+        self._meter_stale_notified: bool = False
+        # Ursache der zuletzt verschickten LAN-Meldung; wechselt sie, wird neu
+        # benachrichtigt statt den alten – dann falschen – Text stehenzulassen.
+        self._lan_notified_reason: str | None = None
+        self._lan_token_retry_at: float | None = None
+        self._lan_token_renewing: bool = False
+        self._decrease_rejected_since: float | None = None
+        self._meter_standoff_notified: bool = False
 
     # ------------------------------------------------------------------ #
     #  Lifecycle                                                          #
@@ -124,6 +222,10 @@ class IonaDataManager:
         else:
             lan_interval = INTERVAL_LAN_DATA
             web_interval = INTERVAL_WEB_DATA
+
+        self._max_lan_silence = max(
+            MAX_LAN_SILENCE_MIN, LAN_SILENCE_FACTOR * lan_interval
+        )
 
         self._schedule(self._task_web_token, INTERVAL_WEB_TOKEN)
         self._schedule(self._task_lan_token, INTERVAL_LAN_TOKEN)
@@ -182,18 +284,21 @@ class IonaDataManager:
 
     @staticmethod
     def _meter_measurement_age() -> float | None:
-        """Alter des ältesten Zähler-Messwerts in Sekunden.
+        """Wie lange steht der Zählerstand schon unverändert (Sekunden)?
 
-        Geprüft werden nur die Felder, die der Web-Fallback auch liefern
-        kann (Momentanleistung, Gesamtverbrauch). Gesamteinspeisung bleibt
-        außen vor: bei Anlagen ohne Einspeisung steht das Export-Register
-        dauerhaft still und würde den Fallback permanent auslösen.
+        Ausgewertet wird ausschließlich `Gesamtverbrauch`. Seine Zeitmarke
+        rückt seit 2.3.0 nur noch bei echter Werteänderung vor, das Alter ist
+        damit ein brauchbares Stillstands-Signal.
 
-        Bewusst der ÄLTESTE der beiden Werte – sonst maskiert die ständig
-        laufende Momentanleistung einen seit Stunden eingefrorenen
-        Zählerstand.
+        `Momentanleistung` wird bewusst NICHT mehr mitgeprüft: Läuft eine Last
+        konstant, bleibt der Leistungswert minutenlang gleich, seine Zeitmarke
+        altert – und der Fallback würde bei einer völlig gesunden Anlage
+        auslösen. Die Erreichbarkeit deckt `_lan_is_silent()` ab.
 
-        None = keine verwertbaren Messzeitpunkte (gilt als veraltet).
+        `Gesamteinspeisung` bleibt außen vor: ohne PV steht das Exportregister
+        dauerhaft still, und die Cloud liefert es ohnehin nicht.
+
+        None = kein verwertbarer Zeitstempel (gilt als veraltet).
         """
         filepath = os.path.join(_DATA_DIR, "meter_db.json")
         if not os.path.isfile(filepath):
@@ -217,17 +322,108 @@ class IonaDataManager:
         if entry is None:
             return None
 
-        ages: list[float] = []
-        for key in ("Momentanleistung", "Gesamtverbrauch"):
-            if key not in entry:
-                continue
-            stamp = parse_ts(entry.get(f"{key}_timestamp"))
-            if stamp is None:
-                return None
-            now = dt_util.now() if stamp.tzinfo else datetime.now()
-            ages.append((now - stamp).total_seconds())
+        if "Gesamtverbrauch" not in entry:
+            return None
+        stamp = parse_ts(entry.get("Gesamtverbrauch_timestamp"))
+        if stamp is None:
+            return None
+        now = dt_util.now() if stamp.tzinfo else datetime.now()
+        return (now - stamp).total_seconds()
 
-        return max(ages) if ages else None
+    def _lan_is_silent(self) -> bool:
+        """True, wenn seit `_max_lan_silence` kein LAN-Abruf mehr geglückt ist.
+
+        Beim Start (noch kein Abruf) gilt LAN als stumm, damit die Cloud die
+        Sensoren sofort mit Werten versorgen kann.
+        """
+        if self._lan_last_success is None:
+            return True
+        return (time.monotonic() - self._lan_last_success) > self._max_lan_silence
+
+    def _check_meter_standoff(self, rejected: bool) -> None:
+        """Meldet einen dauerhaft blockierten Zählerstand.
+
+        Zählerstände dürfen nicht sinken – sonst wertet Home Assistant den
+        Rückgang bei `total_increasing` als Zählerreset und bucht den vollen
+        neuen Wert als Verbrauch. Nach einem Zählertausch meldet die Box aber
+        dauerhaft einen niedrigeren Stand, und der Schutz würde den Sensor
+        ohne diesen Hinweis für immer einfrieren.
+
+        Bewusst nur eine Meldung und keine automatische Übernahme: Die wäre
+        nicht rückgängig zu machen.
+        """
+        if not rejected:
+            self._decrease_rejected_since = None
+            if self._meter_standoff_notified:
+                pn_dismiss(self.hass, _NOTIFY_METER_STANDOFF)
+                self._meter_standoff_notified = False
+            return
+
+        now = time.monotonic()
+        if self._decrease_rejected_since is None:
+            self._decrease_rejected_since = now
+            return
+        if self._meter_standoff_notified:
+            return
+        if (now - self._decrease_rejected_since) < _METER_STANDOFF_SECONDS:
+            return
+
+        pn_create(
+            self.hass,
+            (
+                "Die iONA Box meldet seit mehreren Stunden einen **niedrigeren "
+                "Zählerstand** als den gespeicherten. Die Integration übernimmt "
+                "ihn nicht, weil Home Assistant einen Rückgang als Zählerreset "
+                "wertet und den vollen Wert als Verbrauch verbuchen würde.\n\n"
+                "Der Zählerstand-Sensor steht deshalb still. Wurde dein Zähler "
+                "**getauscht**, ist das zu erwarten – dann muss der gespeicherte "
+                "Wert einmalig verworfen werden:\n\n"
+                "1. Home Assistant stoppen\n"
+                "2. `custom_components/iona/app/data/meter_db.json` löschen\n"
+                "3. Home Assistant starten\n\n"
+                "Die Langzeitstatistik lässt sich danach unter "
+                "**Entwicklerwerkzeuge → Statistiken** korrigieren."
+            ),
+            title="iONA: Zählerstand blockiert",
+            notification_id=_NOTIFY_METER_STANDOFF,
+        )
+        self._meter_standoff_notified = True
+
+    def _notify_meter_stale(self, stale: bool) -> None:
+        """Edge-getriggerte Meldung: Box antwortet, Zählerstand steht still.
+
+        Ohne diese Meldung wäre der Zustand für den Nutzer unsichtbar – die
+        Datenquelle bleibt bewusst auf LAN, weil die Momentanleistung weiterhin
+        von der Box kommt.
+        """
+        if stale:
+            if self._meter_stale_notified:
+                return
+            pn_create(
+                self.hass,
+                (
+                    "Die iONA Box ist erreichbar, ihr **Zählerstand steht aber "
+                    "seit einiger Zeit still**. Die Integration gleicht den Wert "
+                    "so lange über die enviaM-Cloud ab; die Momentanleistung "
+                    "kommt weiterhin direkt von der Box.\n\n"
+                    "Mögliche Ursachen:\n"
+                    "- Der Stromzähler meldet seinen Zählerstand nur selten an "
+                    "die Box.\n"
+                    "- Die Verbindung zwischen Zähler und Box ist gestört – "
+                    "prüfe den Sitz des Lesekopfs.\n\n"
+                    "Diese Meldung verschwindet automatisch, sobald die Box "
+                    "wieder einen steigenden Zählerstand liefert."
+                ),
+                title="iONA: Zählerstand der Box steht still",
+                notification_id=_NOTIFY_METER_STALE,
+            )
+            self._meter_stale_notified = True
+            return
+
+        if self._meter_stale_notified:
+            pn_dismiss(self.hass, _NOTIFY_METER_STALE)
+            self._meter_stale_notified = False
+            _LOGGER.info("Zählerstand der Box läuft wieder")
 
     def _log_meter_state(self, state: str, detail: str = "") -> None:
         """Loggt den Zählerpfad-Zustand nur beim Wechsel (INFO)."""
@@ -304,8 +500,10 @@ class IonaDataManager:
 
         # 3. Zählerdaten holen (LAN bevorzugt, Web nur als Fallback)
         await self._task_lan_data()
-        age = await self.hass.async_add_executor_job(self._meter_measurement_age)
-        if age is None or age >= MAX_METER_MEASUREMENT_AGE:
+        # Hat LAN nicht geliefert, holt die Cloud die Startwerte. Bewusst über
+        # den Abruf-Erfolg und nicht über das Datenalter: beim Start gibt es
+        # noch keine Historie, an der sich ein Stillstand erkennen ließe.
+        if self._lan_last_success is None:
             await self._task_web_data()
 
         # 4. Spotpreise IMMER holen beim Start
@@ -397,8 +595,11 @@ class IonaDataManager:
         ok = bool(result)
 
         if ok:
+            self._lan_last_success = time.monotonic()
+            self._check_meter_standoff(result.rejected_decrease)
             if result.updated:
                 self._log_meter_state("LAN aktuell")
+                self._notify_meter_stale(False)
             else:
                 # Box antwortet, liefert aber keine neuen Messwerte. Das ist
                 # der Fall, den ein reines True/False unsichtbar macht.
@@ -409,71 +610,135 @@ class IonaDataManager:
             if self._lan_unreachable_notified:
                 pn_dismiss(self.hass, _NOTIFY_BOX_UNREACHABLE)
                 self._lan_unreachable_notified = False
+            self._lan_notified_reason = None
             self._lan_fail_count = 0
         else:
             self._lan_fail_count += 1
-            self._log_meter_state("LAN nicht erreichbar", result.error or "")
+            reason = result.error or ERR_UNREACHABLE
+            self._log_meter_state(_LAN_STATE_BY_REASON.get(
+                reason, "LAN nicht erreichbar"))
+
+            if reason == ERR_AUTH:
+                await self._renew_lan_token_after_auth_error()
+
             # Edge-Trigger: nur EINMAL beim Erreichen der Schwelle benachrichtigen,
             # nicht bei jedem 5-s-Fehlversuch (sonst Mail-Flut bei weitergeleiteten
-            # persistent_notification-Events).
-            if (
-                self._lan_fail_count >= _FAIL_THRESHOLD_LAN
-                and not self._lan_unreachable_notified
+            # persistent_notification-Events). Zusätzlich neu benachrichtigen,
+            # wenn sich die URSACHE ändert – sonst liest der Nutzer weiter
+            # "prüfe die IP", obwohl es längst ein Token-Problem ist.
+            if self._lan_fail_count >= _FAIL_THRESHOLD_LAN and (
+                self._lan_notified_reason != reason
             ):
-                # IP aus secrets-n2g.env lesen für die Meldung
                 from .env_utils import read_env_file, SECRETS_ENV
                 secrets = await self.hass.async_add_executor_job(
                     read_env_file, SECRETS_ENV
                 )
                 ip = secrets.get("IONA_BOX", "unbekannt")
+                title, message = _lan_failure_notification(reason, ip)
                 pn_create(
                     self.hass,
-                    (
-                        f"Die iONA Box unter **{ip}** ist nicht erreichbar. "
-                        "Bitte prüfe, ob die Box eingeschaltet und im Netzwerk ist, "
-                        "und ob die IP-Adresse unter "
-                        "**Einstellungen → Geräte & Dienste → iona-ha → Optionen** "
-                        "korrekt ist."
-                    ),
-                    title="iONA: Box nicht erreichbar",
+                    message,
+                    title=title,
                     notification_id=_NOTIFY_BOX_UNREACHABLE,
                 )
                 self._lan_unreachable_notified = True
+                self._lan_notified_reason = reason
 
         _LOGGER.debug("Fertig: get_lan_data → %s", "OK" if ok else "FEHLER")
 
-    async def _task_web_data(self) -> None:
-        """Web-Daten als Fallback, wenn die Zähler-MESSWERTE veraltet sind.
+    async def _renew_lan_token_after_auth_error(self) -> None:
+        """Nach einem 401 sofort einen neuen LAN-Token holen.
 
-        Der Auslöser ist das Alter der Messzeitpunkte in meter_db.json, nicht
-        die Änderungszeit der Datei: die wird schon durch die ständig
-        laufende Momentanleistung erneuert, während ein Zählerstand daneben
-        stundenlang stillstehen kann.
+        Ohne das wartet die Integration bis zu 86 Minuten auf den regulären
+        Turnus (INTERVAL_LAN_TOKEN) und bleibt in der Zwischenzeit blind –
+        schlägt die turnusmäßige Erneuerung dann ebenfalls fehl, dauerhaft.
+
+        Der Cooldown-Stempel wird VOR dem await gesetzt und ein
+        In-Flight-Flag gehalten: `async_track_time_interval` unterdrückt keine
+        Überlappung, und der LAN-Task feuert alle 5 s, während der
+        Token-Abruf bis zu 15 s braucht. Ohne beides liefen mehrere
+        Token-Anfragen parallel in dieselbe Datei.
+        """
+        if self._lan_token_renewing:
+            return
+        now = time.monotonic()
+        if (
+            self._lan_token_retry_at is not None
+            and now < self._lan_token_retry_at
+        ):
+            return
+
+        self._lan_token_retry_at = now + _LAN_TOKEN_RETRY_COOLDOWN
+        self._lan_token_renewing = True
+        _LOGGER.info("LAN-Token wurde abgelehnt – fordere sofort einen neuen an")
+        try:
+            await self._task_lan_token()
+        finally:
+            self._lan_token_renewing = False
+
+    async def _task_web_data(self) -> None:
+        """Cloud-Abruf als Fallback. Zwei unabhängige Auslöser:
+
+        1. **LAN ist stumm** – seit `_max_lan_silence` kein erfolgreicher
+           Abruf. Dann übernimmt die Cloud alle Werte.
+        2. **LAN antwortet, der Zählerstand steht** – `Gesamtverbrauch` hat
+           sich seit `MAX_METER_MEASUREMENT_AGE` nicht verändert. Dann gleicht
+           die Cloud nur den Zählerstand ab; die Momentanleistung bleibt beim
+           sekundengenauen LAN-Wert (`lan_alive`).
+
+        Erreichbarkeit und Datenqualität sind zwei verschiedene Fragen und
+        brauchen deshalb zwei Schwellen.
         """
         if not await self.hass.async_add_executor_job(env_file_exists, WEB_TOKEN_ENV):
             return
 
+        lan_silent = self._lan_is_silent()
         age = await self.hass.async_add_executor_job(self._meter_measurement_age)
-        if age is not None and age < MAX_METER_MEASUREMENT_AGE:
+        meter_stale = age is None or age >= MAX_METER_MEASUREMENT_AGE
+
+        if not lan_silent and not meter_stale:
             return
 
-        _LOGGER.info(
-            "Starte: get_web_data (Fallback – Messwerte %s)",
-            "ohne verwertbaren Zeitstempel" if age is None
-            else f"{int(age)} s alt",
-        )
+        # Mindestabstand unabhängig vom eingestellten interval_web.
+        now = time.monotonic()
+        if (
+            self._web_last_run is not None
+            and (now - self._web_last_run) < MIN_WEB_FETCH_INTERVAL
+        ):
+            return
+        self._web_last_run = now
+
+        if lan_silent:
+            grund = "LAN stumm"
+        else:
+            grund = (
+                "Zählerstand steht seit "
+                + ("unbekannt lange" if age is None else f"{int(age)} s")
+            )
+
+        _LOGGER.info("Starte: get_web_data (Fallback – %s)", grund)
         from .app.get_web_data import run as _run
         lock = self._meter_db_lock
 
         def _locked_run():
             with lock:
-                return _run()
+                return _run(lan_alive=not lan_silent)
 
         result = await self.hass.async_add_executor_job(_locked_run)
         if not result:
             self._log_meter_state("WEB fehlgeschlagen", result.error or "")
-        elif result.updated:
+        elif result.updated and lan_silent:
             self._log_meter_state("WEB aktuell")
+        elif result.updated:
+            # Erst jetzt steht fest, dass der Zählerstand der Box wirklich
+            # falsch war: Die Cloud hatte einen höheren Wert und hat ihn
+            # geschrieben. Das bloße Alter reicht als Begründung nicht – bei
+            # sehr kleiner Last (5 W braucht 12 Minuten für eine Wattstunde)
+            # steht das Register auch bei einer völlig gesunden Anlage länger
+            # als die Schwelle still. Dann liegt der Cloud-Wert aber darunter
+            # und wird verworfen, hier kommt niemand vorbei.
+            self._log_meter_state("LAN mit veralteten Zählerständen")
+            self._notify_meter_stale(True)
         else:
             # Cloud antwortet, hat aber selbst keinen neueren Messwert –
             # dann kann der Fallback nicht helfen.

@@ -12,18 +12,26 @@ genau diese Zeitspanne. Den Vergleich übernimmt deshalb
 """
 
 import os
-import json
 import logging
 
 import requests
 from tinydb import TinyDB, Query
 
 try:  # als Paket (Home Assistant)
-    from .fetch_utils import FetchResult, newest, ts_allows_update, value_allows_update
-except ImportError:  # direkter Aufruf: python app/get_web_data.py
-    from fetch_utils import (  # type: ignore[no-redef]
+    from .fetch_utils import (
+        AtomicJSONStorage,
         FetchResult,
         newest,
+        quarantine_corrupt_db,
+        ts_allows_update,
+        value_allows_update,
+    )
+except ImportError:  # direkter Aufruf: python app/get_web_data.py
+    from fetch_utils import (  # type: ignore[no-redef]
+        AtomicJSONStorage,
+        FetchResult,
+        newest,
+        quarantine_corrupt_db,
         ts_allows_update,
         value_allows_update,
     )
@@ -56,7 +64,14 @@ def _read_env(filename: str) -> dict:
 
 
 def _accept(key: str, entry: dict, new_value, new_ts) -> bool:
-    """Prüft, ob ein Messwert den gespeicherten ersetzen darf."""
+    """Prüft, ob ein Messwert den gespeicherten ersetzen darf.
+
+    Gleiche Regeln wie im LAN-Modul – auch die Cloud stempelt die Abrufzeit
+    und nicht den Messzeitpunkt (ihr `current_summation` steht messbar still,
+    während `timestamp` weiterläuft).
+    """
+    if entry.get(key) == new_value:
+        return False
     if not ts_allows_update(new_ts, entry.get(f"{key}_timestamp")):
         _LOGGER.debug(
             "Web-Daten: %s verworfen – gespeicherter Zeitstempel %r ist nicht älter "
@@ -65,7 +80,7 @@ def _accept(key: str, entry: dict, new_value, new_ts) -> bool:
         )
         return False
     if not value_allows_update(key, new_value, entry.get(key)):
-        _LOGGER.warning(
+        _LOGGER.debug(
             "Web-Daten: %s würde von %s auf %s sinken – verworfen "
             "(Zählerstände dürfen nicht zurückgehen)",
             key, entry.get(key), new_value,
@@ -74,8 +89,16 @@ def _accept(key: str, entry: dict, new_value, new_ts) -> bool:
     return True
 
 
-def run() -> FetchResult:
-    """Web-Verbrauchsdaten abrufen und in DB schreiben."""
+def run(lan_alive: bool = False) -> FetchResult:
+    """Web-Verbrauchsdaten abrufen und in DB schreiben.
+
+    `lan_alive` = die lokale Box antwortet gerade. Dann bleibt die
+    Momentanleistung unangetastet: sie kommt über LAN sekundengenau, während
+    der Cloud-Wert Minuten alt sein kann. Ohne diese Regel könnte ein
+    Web-Abruf – etwa ausgelöst durch einen stehenden Zählerstand – den
+    Live-Leistungswert durch einen alten ersetzen und nebenbei die
+    Datenquelle auf WEB umstellen.
+    """
     web_env = _read_env("WebToken.env")
     access_token = web_env.get("ACCESS_TOKEN")
     if not access_token:
@@ -121,17 +144,12 @@ def run() -> FetchResult:
     os.makedirs(DATA_DIR, exist_ok=True)
     Device = Query()
 
-    if os.path.isfile(DB_PATH):
-        try:
-            with open(DB_PATH, "r", encoding="utf-8") as f:
-                json.load(f)
-        except (json.JSONDecodeError, ValueError):
-            _LOGGER.warning("meter_db.json ist beschädigt – wird neu erstellt")
-            os.remove(DB_PATH)
+    quarantine_corrupt_db(DB_PATH)
 
     updated = False
+    took_over = False
 
-    with TinyDB(DB_PATH) as db:
+    with TinyDB(DB_PATH, storage=AtomicJSONStorage) as db:
         result = db.search(Device.device_id == "Stromzaehler")
         if result:
             entry = result[0]
@@ -141,13 +159,22 @@ def run() -> FetchResult:
                 entry["Gesamtverbrauch_timestamp"] = gesamtverbrauch_ts
                 updated = True
 
-            if _accept("Momentanleistung", entry, momentanleistung, momentanleistung_ts):
+            if not lan_alive and _accept(
+                "Momentanleistung", entry, momentanleistung, momentanleistung_ts
+            ):
                 entry["Momentanleistung"] = momentanleistung
                 entry["Momentanleistung_timestamp"] = momentanleistung_ts
                 updated = True
+                took_over = True
 
             if updated:
-                entry["source"] = SOURCE
+                # source wechselt nur, wenn WEB die Führung übernimmt. Eine
+                # reine Zählerstand-Korrektur bei laufendem LAN lässt sie auf
+                # LAN – sonst spränge der Sensor im Minutentakt hin und her,
+                # das Badge der Card mit, und Automationen auf state == 'WEB'
+                # feuerten dauernd.
+                if took_over:
+                    entry["source"] = SOURCE
                 db.update(entry, Device.device_id == "Stromzaehler")
                 _LOGGER.debug("Web-Daten: DB aktualisiert (Quelle: WEB)")
         else:
@@ -162,6 +189,7 @@ def run() -> FetchResult:
                 "Momentanleistung_timestamp": momentanleistung_ts,
             })
             updated = True
+            took_over = True
             _LOGGER.info("Web-Daten: Neuer Eintrag erstellt")
 
     return FetchResult(

@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build iona.zip
-        run: zip -r iona.zip . -x ".git/*" -x ".github/*"
+        run: zip -r iona.zip . -x ".git/*" -x ".github/*" -x "tests/*"
 
       - name: Create release with asset
         env:

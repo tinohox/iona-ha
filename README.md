@@ -374,7 +374,9 @@ Momentanleistung_timestamp: 2026-09-13T14:25:06+02:00
 source: LAN
 ```
 
-Das ist der **Messzeitpunkt**, nicht der Abrufzeitpunkt – der Unterschied ist entscheidend. Liegen diese Zeiten deutlich zurück, liefert die Quelle selbst keine neuen Werte; ein häufigeres Abfragen ändert daran nichts.
+Der Zeitstempel sagt, **seit wann dieser Wert unverändert gilt** – er rückt nur vor, wenn sich der Messwert tatsächlich geändert hat.
+
+Liegt `Gesamtverbrauch_timestamp` deutlich zurück, während Strom fließt, dann steht der Zählerstand in der Quelle still. Die Integration kann ihn dann nicht frischer machen als er ist; sie zieht in diesem Fall automatisch die Cloud zum Vergleich heran (siehe Schritt 2).
 
 **2. Zustandswechsel im Log lesen**
 
@@ -385,9 +387,13 @@ Einstellungen → System → Protokolle → nach `iona` filtern. Diese Meldungen
 | `Zählerdaten: Zustand … → LAN aktuell` | Alles in Ordnung, die Box liefert neue Messwerte |
 | `… → LAN ohne neue Messwerte` | Die Box **antwortet**, liefert aber keinen neueren Messwert |
 | `… → LAN nicht erreichbar` | Kein lokaler Zugriff – IP-Adresse und Netzwerk prüfen |
+| `… → LAN weist den Token ab` | Box erreichbar, aber HTTP 401 – die Integration holt automatisch einen neuen Token |
+| `… → LAN antwortet fehlerhaft` | Unter der IP-Adresse antwortet etwas, aber nicht wie erwartet – meist ein anderes Gerät |
+| `… → LAN nicht konfiguriert` | IP-Adresse oder Token fehlen |
 | `… → WEB aktuell` | Der Cloud-Fallback liefert die Werte |
 | `… → WEB ohne neue Messwerte` | Auch die Cloud hat keinen neueren Wert – die Box lädt zu selten hoch |
 | `… → WEB fehlgeschlagen` | Die enviaM-API antwortet nicht oder der Token ist ungültig |
+| `… → LAN mit veralteten Zählerständen` | Die Box antwortet, ihr Zählerstand steht aber still – die Integration gleicht ihn aus der Cloud ab |
 
 Diese Meldungen erscheinen nur beim **Wechsel** des Zustands, nicht bei jedem Abruf – der normale 5-Sekunden-Betrieb bleibt still.
 
@@ -425,6 +431,38 @@ Der lokale Weg ist der schnelle: er liefert im Sekundentakt. Steht im Log dauerh
 - **Vorübergehende API-Störung?** Einfach abwarten – die Meldung verschwindet automatisch, sobald wieder Daten kommen
 - **Kein „mein Strom Vision"-Tarif gebucht?** Ohne dynamischen Tarif liefert die Schnittstelle dauerhaft keine Preisdaten – deaktiviere dann die Vision-Option unter **Einstellungen → Geräte & Dienste → iona-ha → Optionen**
 - Die Stromzähler-Sensoren (Verbrauch, Einspeisung, Leistung) laufen davon unabhängig normal weiter
+
+</details>
+
+<details>
+<summary><b>Benachrichtigung: Zählerstand der Box steht still</b></summary>
+
+- Die Box **antwortet**, meldet aber seit einiger Zeit denselben Zählerstand, obwohl Strom fließt
+- Die Integration gleicht den Zählerstand so lange über die enviaM-Cloud ab; die **Momentanleistung kommt weiterhin direkt von der Box**, die Datenquelle bleibt deshalb auf `LAN`
+- Häufigste Ursache: Der Stromzähler meldet seinen Zählerstand nur selten an die Box, oder die Verbindung zwischen Zähler und Box ist gestört – prüfe den Sitz des Lesekopfs
+- Die Meldung verschwindet automatisch, sobald die Box wieder einen steigenden Zählerstand liefert
+
+</details>
+
+<details>
+<summary><b>Benachrichtigung: Zählerstand blockiert</b></summary>
+
+- Die Box meldet einen **niedrigeren** Zählerstand als den gespeicherten. Die Integration übernimmt ihn nicht, weil Home Assistant einen Rückgang als Zählerreset wertet und den vollen Wert als Verbrauch verbuchen würde – ein Ausschlag, der sich nur von Hand korrigieren lässt
+- Nach einem **Zählertausch** ist das zu erwarten. Dann muss der gespeicherte Wert einmalig verworfen werden:
+  1. Home Assistant stoppen
+  2. `custom_components/iona/app/data/meter_db.json` löschen
+  3. Home Assistant starten
+- Die Langzeitstatistik lässt sich danach unter **Entwicklerwerkzeuge → Statistiken** korrigieren
+- Ein Registerüberlauf der Box wird automatisch erkannt und braucht keinen Eingriff
+
+</details>
+
+<details>
+<summary><b>Benachrichtigung: Anmeldung an der Box abgelehnt</b></summary>
+
+- Die Box ist **erreichbar**, weist den Zugangs-Token der Integration aber ab (HTTP 401). Strom, Netzwerk und IP-Adresse sind in diesem Fall in Ordnung – dort zu suchen führt nicht weiter
+- Die Integration fordert automatisch sofort einen neuen Token an
+- Bleibt die Meldung bestehen: Zugangsdaten unter **Einstellungen → Geräte & Dienste → iona-ha → Optionen** prüfen. Der Token für die Box wird über das enviaM-Konto ausgestellt
 
 </details>
 
