@@ -41,6 +41,12 @@ SCAN_INTERVAL = timedelta(seconds=INTERVAL_SENSOR_UPDATE)
 METER_UID_PREFIX = "iona_meter_"
 METER_DEVICE_ID = "Stromzaehler"
 
+# device_id, die app/vision.py in vision_db.json schreibt. Sie geht in die
+# unique_id der Preissensoren ein – Abweichung würde bei Bestandsnutzern eine
+# zweite, falsche Entität erzeugen. tests/test_entity_preservation.py prüft,
+# dass beide Stellen übereinstimmen.
+VISION_DEVICE_ID = "vision_strom"
+
 
 # -------------------- Sync Reader (im Executor aufrufen) --------------------
 
@@ -177,6 +183,16 @@ class IonaSensor(CoordinatorEntity, Entity):
         self._unit_cached = self._initial_attrs.get(f"{sensor_key}_unit")
 
     def _is_vision_data(self) -> bool:
+        """Gehört dieser Sensor zum Vision-Teil?
+
+        Die Vision-Keys sind eindeutig: Ein Sensor für `aktueller_preis` ist
+        per Definition ein Vision-Sensor. Das darf **nicht** allein an den
+        Laufzeitdaten hängen – fehlt vision_db.json beim Start, fiele
+        `unique_id` sonst auf den Meter-Zweig und Home Assistant legte eine
+        zweite, falsche Entität neben der bestehenden an.
+        """
+        if self._sensor_key in self.VISION_KEYS:
+            return True
         device = self.coordinator.data.get(self._device_id, {})
         return any(key in device for key in self.VISION_KEYS)
 
@@ -455,6 +471,30 @@ async def async_setup_entry(hass, entry, async_add_entities):
         # unknown bis zur nächsten Berechnung
         if is_vision and vision_tools_enabled and "endzeit" not in device_data:
             sensors.append(IonaSensor(coordinator, device_id, "endzeit", device_data))
+
+    # Vision-Preissensoren auch dann anlegen, wenn noch keine Daten da sind.
+    # Entitäten entstehen nur beim Setup: Schlug der Tarif-Abruf beim Start
+    # fehl, entstünde der Preissensor nie – auch nicht, wenn die Daten kurz
+    # darauf eintreffen. Der Nutzer müsste Home Assistant neu starten, ohne zu
+    # wissen warum (genau die Beobachtung aus Issue #3). Angelegt wird nur,
+    # wenn der Nutzer die Vision-Option eingeschaltet hat; bis Daten da sind,
+    # steht der Sensor auf "unbekannt".
+    has_vision_data = any(
+        isinstance(device_data, dict)
+        and any(key in device_data for key in IonaSensor.VISION_KEYS)
+        for device_data in coordinator.data.values()
+    )
+    if vision_tariff_enabled and not has_vision_data:
+        pending = ["aktueller_preis"]
+        if vision_tools_enabled:
+            pending += sorted(IonaSensor.VISION_TOOLS_KEYS)
+        for key in pending:
+            sensors.append(IonaSensor(coordinator, VISION_DEVICE_ID, key, {}))
+        logger.info(
+            "Vision-Daten noch nicht vorhanden – %d Preis-Entität(en) angelegt; "
+            "sie füllen sich, sobald die Tarifdaten eintreffen",
+            len(pending),
+        )
 
     _restore_known_meter_sensors(hass, entry, coordinator, sensors, logger)
 

@@ -289,12 +289,95 @@ def test_upgrade_from_old_data():
     check("Rückgang weiterhin blockiert", entry()["Gesamtverbrauch"], 15421.6)
 
 
+def test_vision_device_id_matches_vision_module():
+    section("Vision-device_id stimmt mit app/vision.py überein")
+    from iona.sensor import VISION_DEVICE_ID
+    quelle = open(os.path.join(REPO, "app", "vision.py"), encoding="utf-8").read()
+    check("vision.py schreibt dieselbe device_id",
+          f'"device_id": "{VISION_DEVICE_ID}"' in quelle, True)
+    # Abweichung wäre fatal: die device_id geht in die unique_id ein.
+    import hashlib
+    h = hashlib.md5(f"vision_{VISION_DEVICE_ID}_aktueller_preis".encode()).hexdigest()[:8]
+    check("ergibt die bekannte unique_id",
+          f"iona_vision_aktueller_preis_{h}", "iona_vision_aktueller_preis_3cc4e38e")
+
+
+def test_price_sensor_without_data():
+    section("Preissensor entsteht auch ohne Vision-Daten (Issue #3)")
+    import asyncio
+    import iona.sensor as S
+
+    class _Coord:
+        def __init__(self, update_method):
+            self.update_method = update_method
+            self.data = {}
+
+        async def async_config_entry_first_refresh(self):
+            self.data = await self.update_method()
+
+    class _Reg:
+        entities: dict = {}
+
+        def async_remove(self, eid):
+            pass
+
+    # sensor.py hat den Namen beim Import gebunden – dort ersetzen, nicht im Modul
+    S.DataUpdateCoordinator = (
+        lambda hass, logger=None, name=None, update_method=None,
+        update_interval=None: _Coord(update_method))
+    sys.modules["homeassistant.helpers.entity_registry"].async_get = lambda h: _Reg()
+
+    class _Hass:
+        async def async_add_executor_job(self, fn, *a):
+            return fn(*a)
+
+    def setup(vision_data, vision_on, tools_on=False):
+        tmp = tempfile.mkdtemp()
+        S.DB_PATH = os.path.join(tmp, "meter_db.json")
+        S.VISION_DB_PATH = os.path.join(tmp, "vision_db.json")
+        S.SPOTPREISE_DB_PATH = os.path.join(tmp, "spot.json")
+        json.dump({"_default": {"1": {"device_id": "Stromzaehler", "source": "LAN",
+                                      "Gesamtverbrauch": 1.0}}},
+                  open(S.DB_PATH, "w"))
+        if vision_data:
+            json.dump({"_default": {"1": vision_data}}, open(S.VISION_DB_PATH, "w"))
+        S._VISION_AVAILABLE = True
+        S.is_vision_enabled = lambda: vision_on
+        S.is_vision_tools_enabled = lambda: tools_on
+        made = []
+        asyncio.run(S.async_setup_entry(
+            _Hass(), _Entry(), lambda ents, update_before_add=False: made.extend(ents)))
+        return sorted(x.unique_id for x in made)
+
+    mit = setup({"device_id": "vision_strom", "aktueller_preis": 0.49,
+                 "timestamp": "x"}, True)
+    ohne = setup(None, True)
+    aus = setup(None, False)
+
+    preis = "iona_vision_aktueller_preis_3cc4e38e"
+    check("mit Daten: Preissensor da", preis in mit, True)
+    check("OHNE Daten: Preissensor trotzdem da", preis in ohne, True)
+    check("gleiche unique_id wie mit Daten – kein Duplikat",
+          [u for u in ohne if "aktueller_preis" in u],
+          [u for u in mit if "aktueller_preis" in u])
+    check("Vision aus: kein Preissensor", any("aktueller_preis" in u for u in aus), False)
+    check("Zähler-Entitäten unverändert",
+          sorted(u for u in ohne if u.startswith("iona_meter_")),
+          sorted(u for u in mit if u.startswith("iona_meter_")))
+
+    tools = setup(None, True, tools_on=True)
+    check("mit Vision Tools kommen die Tools-Sensoren dazu",
+          len([u for u in tools if u.startswith("iona_vision_")]), 4)
+
+
 def main():
     test_entity_never_disappears()
     test_deleted_entity_stays_deleted()
     test_foreign_registry_entries_ignored()
     test_pv_export_running()
     test_upgrade_from_old_data()
+    test_vision_device_id_matches_vision_module()
+    test_price_sensor_without_data()
     print()
     if _FAILS:
         print(f"{len(_FAILS)} FEHLER:")
