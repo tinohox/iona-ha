@@ -41,6 +41,20 @@ SCAN_INTERVAL = timedelta(seconds=INTERVAL_SENSOR_UPDATE)
 METER_UID_PREFIX = "iona_meter_"
 METER_DEVICE_ID = "Stromzaehler"
 
+# Kern-Entitäten des Zählers. Sie entstehen bei jedem Setup, auch wenn ihr Key
+# gerade nicht in meter_db.json steht.
+#
+# Grund: Der Entitäten-Satz ist eine Momentaufnahme der Datei (siehe die
+# Schleife in async_setup_entry). Fehlt ein Wert genau in der Sekunde, in der
+# Home Assistant startet, entsteht die Entität nicht – und sie erscheint auch
+# nicht, wenn der Wert Sekunden später eintrifft, sondern frühestens beim
+# nächsten Neustart. Bei einer Neuinstallation greift auch die Rettung über
+# das Registry nicht, weil es dort keinen Eintrag mehr gibt.
+#
+# Gesamteinspeisung steht bewusst NICHT hier: ohne PV bliebe sie dauerhaft
+# unbekannt. Für Bestandsnutzer deckt sie _restore_known_meter_sensors() ab.
+BASE_METER_KEYS = ("Gesamtverbrauch", "Momentanleistung", "source")
+
 # device_id, die app/vision.py in vision_db.json schreibt. Sie geht in die
 # unique_id der Preissensoren ein – Abweichung würde bei Bestandsnutzern eine
 # zweite, falsche Entität erzeugen. tests/test_entity_preservation.py prüft,
@@ -360,6 +374,66 @@ class IonaSensor(CoordinatorEntity, Entity):
         return None
 
 
+def _meter_device_id(coordinator) -> str:
+    """device_id des Zählers aus den Coordinator-Daten.
+
+    Fällt auf METER_DEVICE_ID zurück, wenn noch keine Daten vorliegen – der
+    Rückfallwert muss stimmen, weil er über IonaSensor.unique_id in die
+    Identität der Entität eingeht.
+    """
+    return next(
+        (
+            device_id
+            for device_id, data in coordinator.data.items()
+            if isinstance(data, dict) and data.get("device_id") == METER_DEVICE_ID
+        ),
+        METER_DEVICE_ID,
+    )
+
+
+def _add_base_meter_sensors(coordinator, sensors, logger) -> int:
+    """Legt die Kern-Entitäten an, deren Key gerade fehlt (BASE_METER_KEYS).
+
+    Muss VOR _restore_known_meter_sensors() laufen: dort wird anhand der
+    bereits vorhandenen unique_ids entschieden, was noch fehlt.
+    """
+    # Eine Altdatenbank ohne `device_id` landet unter ihrer doc_id, und die
+    # geht über IonaSensor.unique_id in die Identität der Entität ein. Beide
+    # Fragen hängen daran, deshalb richten sich beide nach den Zähler-Sensoren,
+    # die oben bereits entstanden sind – und nur wenn es keine gibt, nach dem
+    # Rückfallwert:
+    #   1. Welche Keys sind schon da? (sonst Duplikat)
+    #   2. Auf welches Gerät gehört die neue Entität? (sonst ein zweites Gerät)
+    meter_sensors = [s for s in sensors if not s._is_vision_data()]
+    existing_keys = {sensor._sensor_key for sensor in meter_sensors}
+    device_id = (
+        meter_sensors[0]._device_id if meter_sensors
+        else _meter_device_id(coordinator)
+    )
+    meter_data = coordinator.data.get(device_id) or {}
+
+    known = {sensor.unique_id for sensor in sensors}
+    added = 0
+
+    for key in BASE_METER_KEYS:
+        if key in existing_keys:
+            continue  # die Schleife im Setup hat die Entität schon angelegt
+        sensor = IonaSensor(coordinator, device_id, key, meter_data)
+        if sensor.unique_id in known:
+            continue
+        sensors.append(sensor)
+        known.add(sensor.unique_id)
+        added += 1
+
+    if added:
+        logger.info(
+            "%d Zähler-Entität(en) ohne Daten angelegt; sie füllen sich, "
+            "sobald Messwerte eintreffen",
+            added,
+        )
+    return added
+
+
 def _restore_known_meter_sensors(hass, entry, coordinator, sensors, logger) -> int:
     """Legt Zähler-Entitäten an, die es laut Registry schon gab.
 
@@ -377,14 +451,7 @@ def _restore_known_meter_sensors(hass, entry, coordinator, sensors, logger) -> i
 
     registry = er.async_get(hass)
 
-    meter_device_id = next(
-        (
-            device_id
-            for device_id, data in coordinator.data.items()
-            if isinstance(data, dict) and data.get("device_id") == METER_DEVICE_ID
-        ),
-        METER_DEVICE_ID,
-    )
+    meter_device_id = _meter_device_id(coordinator)
     meter_data = coordinator.data.get(meter_device_id) or {}
 
     known = {sensor.unique_id for sensor in sensors}
@@ -496,6 +563,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
             len(pending),
         )
 
+    _add_base_meter_sensors(coordinator, sensors, logger)
     _restore_known_meter_sensors(hass, entry, coordinator, sensors, logger)
 
     async_add_entities(sensors, update_before_add=True)
