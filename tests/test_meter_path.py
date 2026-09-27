@@ -595,6 +595,248 @@ def test_brutto_db_guard():
             os.replace(backup, path)
 
 
+# --------------------------------------------------------------------------
+#  Teil H – Box antwortet, liefert aber keine Momentanleistung (Issue #2, Sven)
+# --------------------------------------------------------------------------
+
+def test_box_without_power():
+    section("H · Box meldet power=0, Zähler läuft – Cloud ergänzt nur die Leistung")
+    import get_lan_data, get_web_data
+    setup_modules()
+
+    # Gemessen an Svens Box: import läuft (~200 W), power.now.value = 0.
+    BOX["payload"] = box_payload(EPOCH, 0, 21_475_795, 482_456)
+    r = get_lan_data.run()
+    check("LAN meldet fehlende Leistung", r.power_missing, True)
+    check("LAN hat geschrieben", r.written, ("Gesamtverbrauch", "Gesamteinspeisung"))
+    check("kein Momentanleistung-Key", "Momentanleistung" in entry(), False)
+
+    BOX["payload"] = box_payload(EPOCH + 300, 0, 21_475_812, 482_456)
+    r = get_lan_data.run()
+    check("Zählerstand läuft weiter", entry()["Gesamtverbrauch"], 21475.812)
+    check("Leistung fehlt weiterhin", r.power_missing, True)
+
+    # Bisheriges Verhalten bleibt: solange LAN Leistung liefern KÖNNTE,
+    # schreibt die Cloud sie nicht (lan_has_power ist per Default True).
+    CLOUD["payload"] = cloud_payload("2026-09-14T18:04:00+02:00", 210, 21_475_700)
+    r = get_web_data.run(lan_alive=True)
+    check("Default: Cloud schreibt keine Leistung", "Momentanleistung" in entry(), False)
+    check("Default: nichts geschrieben", r.written, ())
+
+    # Der Fix: LAN lebt, liefert aber keine Leistung → Cloud ergänzt sie.
+    r = get_web_data.run(lan_alive=True, lan_has_power=False)
+    check("Cloud ergänzt die Momentanleistung", entry()["Momentanleistung"], 210)
+    check("nur die Leistung geschrieben", r.written, ("Momentanleistung",))
+    check("Zählerstand bleibt der (höhere) LAN-Wert",
+          entry()["Gesamtverbrauch"], 21475.812)
+    check("Datenquelle bleibt LAN", entry()["source"], "LAN")
+    check("Einspeisung unangetastet", entry()["Gesamteinspeisung"], 482.456)
+
+    # Cloud-Wert unverändert → nichts zu schreiben, kein Fehler
+    r = get_web_data.run(lan_alive=True, lan_has_power=False)
+    check("gleicher Cloud-Wert schreibt nichts", r.updated, False)
+
+    # Box liefert wieder Leistung → LAN gewinnt sofort (Stempel ist jünger)
+    BOX["payload"] = box_payload(EPOCH + 600, 235, 21_475_830, 482_456)
+    r = get_lan_data.run()
+    check("LAN-Leistung verdrängt Cloud-Wert", entry()["Momentanleistung"], 235)
+    check("power_missing wieder False", r.power_missing, False)
+    check("Leistung in written", "Momentanleistung" in r.written, True)
+
+    # Und ab jetzt wieder gesperrt für die Cloud
+    CLOUD["payload"] = cloud_payload("2026-09-14T18:12:00+02:00", 190, 21_475_700)
+    get_web_data.run(lan_alive=True, lan_has_power=True)
+    check("Cloud überschreibt Live-Wert nicht", entry()["Momentanleistung"], 235)
+
+
+def test_web_written_reports_fields():
+    section("H · written unterscheidet Zählerstand-Korrektur von Leistungs-Ergänzung")
+    import get_lan_data, get_web_data
+    setup_modules()
+    BOX["payload"] = box_payload(EPOCH, 800, 15_418_500, 0)
+    get_lan_data.run()
+    CLOUD["payload"] = cloud_payload("2026-09-14T18:20:00+02:00", 300, 15_419_000)
+    r = get_web_data.run(lan_alive=True)
+    check("Zählerstand-Korrektur: written", r.written, ("Gesamtverbrauch",))
+    CLOUD["payload"] = cloud_payload("2026-09-14T18:25:00+02:00", 310, 15_419_100)
+    r = get_web_data.run(lan_alive=False)
+    check("Übernahme: beide Felder", r.written, ("Gesamtverbrauch", "Momentanleistung"))
+    check("Übernahme: source WEB", entry()["source"], "WEB")
+
+
+class _Hass:
+    async def async_add_executor_job(self, fn, *a):
+        return fn(*a)
+
+
+def _manager(dm):
+    mgr = dm.IonaDataManager(_Hass())
+    mgr._max_lan_silence = 60
+    return mgr
+
+
+def test_datamanager_power_missing():
+    section("H · DataManager: Leistung fehlt → Karenz, Zustand, Meldung, Cloud-Aufruf")
+    _stub_homeassistant()
+    import asyncio, time as _t
+    pkg = types.ModuleType("iona")
+    pkg.__path__ = [REPO]
+    sys.modules["iona"] = pkg
+    import iona.data_manager as dm
+    from iona.const import MAX_POWER_MISSING_AGE, LAN_NO_UPDATE_GRACE
+    from fetch_utils import FetchResult
+
+    notes = {"created": [], "dismissed": []}
+    dm.pn_create = lambda hass, msg, title="", notification_id="": notes["created"].append(notification_id)
+    dm.pn_dismiss = lambda hass, nid: notes["dismissed"].append(nid)
+    dm.env_file_exists = lambda p: True
+
+    lan_calls = {"result": None}
+    web_calls = {"kwargs": [], "result": None}
+    lan_mod = types.ModuleType("iona.app.get_lan_data")
+    lan_mod.run = lambda: lan_calls["result"]
+    web_mod = types.ModuleType("iona.app.get_web_data")
+
+    def _web_run(**kw):
+        web_calls["kwargs"].append(kw)
+        return web_calls["result"]
+    web_mod.run = _web_run
+    sys.modules["iona.app.get_lan_data"] = lan_mod
+    sys.modules["iona.app.get_web_data"] = web_mod
+
+    db = os.path.join(dm._DATA_DIR, "meter_db.json")
+    backup = db + ".testbackup"
+    had = os.path.isfile(db)
+    if had:
+        os.replace(db, backup)
+
+    def write_db(minutes_ago):
+        os.makedirs(dm._DATA_DIR, exist_ok=True)
+        e = {"device_id": "Stromzaehler", "source": "LAN", "Gesamtverbrauch": 1.0,
+             "Gesamtverbrauch_timestamp":
+                 (datetime.now(TZ) - timedelta(minutes=minutes_ago)).isoformat()}
+        with open(db, "w") as f:
+            json.dump({"_default": {"1": e}}, f)
+
+    run = asyncio.run
+    try:
+        # --- Gesunde Anlage: nichts ändert sich -----------------------------
+        mgr = _manager(dm)
+        write_db(0)
+        lan_calls["result"] = FetchResult(True, updated=True, source="LAN",
+                                          written=("Gesamtverbrauch", "Momentanleistung"))
+        run(mgr._task_lan_data())
+        check("gesund: Zustand LAN aktuell", mgr._meter_state, "LAN aktuell")
+        check("gesund: kein Tracker", mgr._lan_power_missing_since, None)
+        run(mgr._task_web_data())
+        check("gesund: Cloud nicht aufgerufen", web_calls["kwargs"], [])
+        check("gesund: keine Meldung", notes["created"], [])
+
+        # --- Einzelner 0-W-Moment (PV): löst nichts aus ---------------------
+        lan_calls["result"] = FetchResult(True, updated=True, source="LAN",
+                                          power_missing=True, written=("Gesamtverbrauch",))
+        run(mgr._task_lan_data())
+        check("kurz ohne Leistung: Tracker gesetzt",
+              mgr._lan_power_missing_since is not None, True)
+        check("kurz ohne Leistung: Zustand bleibt LAN aktuell",
+              mgr._meter_state, "LAN aktuell")
+        run(mgr._task_web_data())
+        check("kurz ohne Leistung: Cloud nicht aufgerufen", web_calls["kwargs"], [])
+        lan_calls["result"] = FetchResult(True, updated=True, source="LAN",
+                                          written=("Gesamtverbrauch", "Momentanleistung"))
+        run(mgr._task_lan_data())
+        check("Leistung zurück: Tracker gelöscht", mgr._lan_power_missing_since, None)
+        check("Leistung zurück: keine Meldung", notes["created"], [])
+
+        # --- Svens Fall: Karenz abgelaufen ----------------------------------
+        lan_calls["result"] = FetchResult(True, updated=True, source="LAN",
+                                          power_missing=True, written=("Gesamtverbrauch",))
+        run(mgr._task_lan_data())
+        mgr._lan_power_missing_since -= MAX_POWER_MISSING_AGE + 1
+        run(mgr._task_lan_data())
+        check("Karenz abgelaufen: Zustand", mgr._meter_state, "LAN ohne Momentanleistung")
+        check("Karenz abgelaufen: Meldung genau einmal",
+              notes["created"], [dm._NOTIFY_POWER_MISSING])
+        run(mgr._task_lan_data())
+        check("weiterer Abruf: keine zweite Meldung",
+              notes["created"], [dm._NOTIFY_POWER_MISSING])
+
+        web_calls["result"] = FetchResult(True, updated=True, source="WEB",
+                                          written=("Momentanleistung",))
+        mgr._web_last_run = None
+        run(mgr._task_web_data())
+        check("Cloud aufgerufen mit lan_alive=True, lan_has_power=False",
+              web_calls["kwargs"], [{"lan_alive": True, "lan_has_power": False}])
+        check("nur Leistung ergänzt: Zustand bleibt",
+              mgr._meter_state, "LAN ohne Momentanleistung")
+        check("nur Leistung ergänzt: KEINE Zählerstand-Meldung",
+              mgr._meter_stale_notified, False)
+
+        # Cloud hat denselben Wert → nichts geschrieben, Zustand bleibt trotzdem
+        web_calls["result"] = FetchResult(True, updated=False, source="WEB")
+        mgr._web_last_run = None
+        run(mgr._task_web_data())
+        check("Cloud ohne Neues: Zustand bleibt",
+              mgr._meter_state, "LAN ohne Momentanleistung")
+
+        # Box liefert wieder Leistung → Meldung widerrufen, Zustand zurück
+        lan_calls["result"] = FetchResult(True, updated=True, source="LAN",
+                                          written=("Gesamtverbrauch", "Momentanleistung"))
+        run(mgr._task_lan_data())
+        check("Leistung zurück: Meldung widerrufen",
+              notes["dismissed"], [dm._NOTIFY_POWER_MISSING])
+        check("Leistung zurück: Zustand LAN aktuell", mgr._meter_state, "LAN aktuell")
+
+        # --- Stehender Zählerstand meldet weiterhin wie bisher --------------
+        write_db(8 * 60)
+        web_calls["kwargs"].clear()
+        web_calls["result"] = FetchResult(True, updated=True, source="WEB",
+                                          written=("Gesamtverbrauch",))
+        mgr._web_last_run = None
+        run(mgr._task_web_data())
+        check("Zählerstand steht: Cloud mit lan_has_power=True",
+              web_calls["kwargs"], [{"lan_alive": True, "lan_has_power": True}])
+        check("Zählerstand steht: Zustand", mgr._meter_state, "LAN mit veralteten Zählerständen")
+        check("Zählerstand steht: Meldung", mgr._meter_stale_notified, True)
+
+        # --- LAN stumm: Übernahme unverändert -------------------------------
+        mgr._lan_last_success = _t.monotonic() - 120
+        web_calls["kwargs"].clear()
+        web_calls["result"] = FetchResult(True, updated=True, source="WEB",
+                                          written=("Gesamtverbrauch", "Momentanleistung"))
+        mgr._web_last_run = None
+        run(mgr._task_web_data())
+        check("LAN stumm: Cloud mit lan_alive=False",
+              web_calls["kwargs"][0]["lan_alive"], False)
+        check("LAN stumm: Zustand WEB aktuell", mgr._meter_state, "WEB aktuell")
+
+        # --- Karenz für "LAN ohne neue Messwerte" ---------------------------
+        mgr = _manager(dm)
+        lan_calls["result"] = FetchResult(True, updated=True, source="LAN",
+                                          written=("Gesamtverbrauch", "Momentanleistung"))
+        run(mgr._task_lan_data())
+        lan_calls["result"] = FetchResult(True, updated=False, source="LAN")
+        for _ in range(3):
+            run(mgr._task_lan_data())
+        check("konstante Last: Zustand bleibt LAN aktuell", mgr._meter_state, "LAN aktuell")
+        mgr._lan_no_update_since -= LAN_NO_UPDATE_GRACE + 1
+        run(mgr._task_lan_data())
+        check("nach Karenz: LAN ohne neue Messwerte",
+              mgr._meter_state, "LAN ohne neue Messwerte")
+        lan_calls["result"] = FetchResult(True, updated=True, source="LAN",
+                                          written=("Momentanleistung",))
+        run(mgr._task_lan_data())
+        check("neuer Wert: sofort wieder LAN aktuell", mgr._meter_state, "LAN aktuell")
+        check("neuer Wert: Karenz zurückgesetzt", mgr._lan_no_update_since, None)
+    finally:
+        if os.path.isfile(db):
+            os.remove(db)
+        if had:
+            os.replace(backup, db)
+        for name in ("iona.app.get_lan_data", "iona.app.get_web_data"):
+            sys.modules.pop(name, None)
+
+
 def main():
     test_value_guard()
     test_no_key_ever_removed()
@@ -611,6 +853,9 @@ def main():
     test_failure_causes()
     test_tariff_status_handling()
     test_brutto_db_guard()
+    test_box_without_power()
+    test_web_written_reports_fields()
+    test_datamanager_power_missing()
 
     print()
     if _FAILS:

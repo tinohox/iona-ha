@@ -39,6 +39,8 @@ from .const import (
     FRESHNESS_TARIFF,
     FRESHNESS_VISION,
     MAX_METER_MEASUREMENT_AGE,
+    MAX_POWER_MISSING_AGE,
+    LAN_NO_UPDATE_GRACE,
     MAX_LAN_SILENCE_MIN,
     LAN_SILENCE_FACTOR,
     MIN_WEB_FETCH_INTERVAL,
@@ -68,6 +70,7 @@ _NOTIFY_BOX_UNREACHABLE = "iona_box_unreachable"
 _NOTIFY_VISION_NO_DATA = "iona_vision_no_data"
 _NOTIFY_METER_STALE = "iona_meter_stale"
 _NOTIFY_METER_STANDOFF = "iona_meter_standoff"
+_NOTIFY_POWER_MISSING = "iona_power_missing"
 
 # Anzahl aufeinanderfolgender Fehler bevor eine Notification erscheint.
 # Getrennt für LAN und Auth, weil die Abfrage-Intervalle stark variieren.
@@ -207,6 +210,15 @@ class IonaDataManager:
         self._lan_token_renewing: bool = False
         self._decrease_rejected_since: float | None = None
         self._meter_standoff_notified: bool = False
+        # Seit wann antwortet die Box ohne Leistungswert (monotone Uhr).
+        # Erst nach MAX_POWER_MISSING_AGE darf die Cloud die Momentanleistung
+        # übernehmen – ein einzelner echter 0-W-Moment (PV) löst nichts aus.
+        self._lan_power_missing_since: float | None = None
+        self._power_missing_notified: bool = False
+        # Seit wann liefert die Box keine neuen Messwerte mehr. Der Zustand
+        # "LAN ohne neue Messwerte" wird erst nach LAN_NO_UPDATE_GRACE geloggt,
+        # sonst flackert das Log bei jeder konstanten Last.
+        self._lan_no_update_since: float | None = None
 
     # ------------------------------------------------------------------ #
     #  Lifecycle                                                          #
@@ -355,6 +367,70 @@ class IonaDataManager:
             return True
         return (time.monotonic() - self._lan_last_success) > self._max_lan_silence
 
+    def _lan_power_missing(self) -> bool:
+        """True, wenn die Box seit MAX_POWER_MISSING_AGE ohne Leistung antwortet.
+
+        Nur dann darf die Cloud die Momentanleistung schreiben, obwohl LAN
+        lebt. Vorher gilt: Ein Live-Wert (auch ein kurz fehlender) schlägt
+        einen minutenalten Cloud-Wert.
+        """
+        if self._lan_power_missing_since is None:
+            return False
+        return (
+            time.monotonic() - self._lan_power_missing_since
+        ) >= MAX_POWER_MISSING_AGE
+
+    def _track_lan_power(self, power_missing: bool) -> bool:
+        """Verfolgt, ob die Box einen Leistungswert liefert; meldet Dauerausfall.
+
+        Wird nur nach einem erfolgreichen LAN-Abruf aufgerufen. Liefert True,
+        wenn die Leistung schon länger als MAX_POWER_MISSING_AGE fehlt – dann
+        führt der Aufrufer den Zustand "LAN ohne Momentanleistung".
+
+        Die Meldung ist edge-getriggert wie alle anderen: einmal beim
+        Erreichen der Schwelle, automatischer Widerruf, sobald die Box wieder
+        Leistung liefert.
+        """
+        if not power_missing:
+            self._lan_power_missing_since = None
+            if self._power_missing_notified:
+                pn_dismiss(self.hass, _NOTIFY_POWER_MISSING)
+                self._power_missing_notified = False
+                _LOGGER.info("Box liefert wieder eine Momentanleistung")
+            return False
+
+        if self._lan_power_missing_since is None:
+            self._lan_power_missing_since = time.monotonic()
+            return False
+        if not self._lan_power_missing():
+            return False
+
+        if not self._power_missing_notified:
+            pn_create(
+                self.hass,
+                (
+                    "Die iONA Box ist erreichbar und liefert den Zählerstand, "
+                    "aber **keinen Wert für die Momentanleistung** – sie meldet "
+                    "0 W oder gar nichts, obwohl der Zähler Strom zieht.\n\n"
+                    "Die Integration holt die Momentanleistung deshalb aus der "
+                    "enviaM-Cloud, im 5-Minuten-Takt statt alle 5 Sekunden. "
+                    "Zählerstand und Datenquelle bleiben bei der Box.\n\n"
+                    "Mögliche Ursachen:\n"
+                    "- Der Stromzähler gibt die Momentanleistung nicht frei – "
+                    "bei vielen Zählern muss dafür die erweiterte Anzeige per "
+                    "PIN freigeschaltet sein, und die Freischaltung kann nach "
+                    "einem Stromausfall verloren gehen.\n"
+                    "- Die Verbindung zwischen Zähler und Box überträgt nur "
+                    "die Zählerstände.\n\n"
+                    "Diese Meldung verschwindet automatisch, sobald die Box "
+                    "wieder einen Leistungswert liefert."
+                ),
+                title="iONA: Box liefert keine Momentanleistung",
+                notification_id=_NOTIFY_POWER_MISSING,
+            )
+            self._power_missing_notified = True
+        return True
+
     def _check_meter_standoff(self, rejected: bool) -> None:
         """Meldet einen dauerhaft blockierten Zählerstand.
 
@@ -408,8 +484,10 @@ class IonaDataManager:
         """Edge-getriggerte Meldung: Box antwortet, Zählerstand steht still.
 
         Ohne diese Meldung wäre der Zustand für den Nutzer unsichtbar – die
-        Datenquelle bleibt bewusst auf LAN, weil die Momentanleistung weiterhin
-        von der Box kommt.
+        Datenquelle bleibt bewusst auf LAN, weil die Box weiterhin antwortet.
+        Der Text sagt nichts über die Momentanleistung: die kann in diesem
+        Zustand von der Box kommen oder – wenn die Box keine liefert – aus
+        der Cloud (siehe _track_lan_power).
         """
         if stale:
             if self._meter_stale_notified:
@@ -419,8 +497,7 @@ class IonaDataManager:
                 (
                     "Die iONA Box ist erreichbar, ihr **Zählerstand steht aber "
                     "seit einiger Zeit still**. Die Integration gleicht den Wert "
-                    "so lange über die enviaM-Cloud ab; die Momentanleistung "
-                    "kommt weiterhin direkt von der Box.\n\n"
+                    "so lange über die enviaM-Cloud ab.\n\n"
                     "Mögliche Ursachen:\n"
                     "- Der Stromzähler meldet seinen Zählerstand nur selten an "
                     "die Box.\n"
@@ -610,18 +687,29 @@ class IonaDataManager:
         ok = bool(result)
 
         if ok:
-            self._lan_last_success = time.monotonic()
+            now = time.monotonic()
+            self._lan_last_success = now
             self._check_meter_standoff(result.rejected_decrease)
+            power_missing = self._track_lan_power(result.power_missing)
             if result.updated:
-                self._log_meter_state("LAN aktuell")
+                self._lan_no_update_since = None
+                self._log_meter_state(
+                    "LAN ohne Momentanleistung" if power_missing else "LAN aktuell"
+                )
                 self._notify_meter_stale(False)
             else:
                 # Box antwortet, liefert aber keine neuen Messwerte. Das ist
-                # der Fall, den ein reines True/False unsichtbar macht.
-                self._log_meter_state(
-                    "LAN ohne neue Messwerte",
-                    f"letzte Messzeit {result.measurement_time}",
-                )
+                # der Fall, den ein reines True/False unsichtbar macht. Erst
+                # nach LAN_NO_UPDATE_GRACE loggen: Bei konstanter Last gleicht
+                # sich der Leistungswert minutenlang, und der Zählerstand
+                # tickt bei kleiner Last nur alle paar Minuten.
+                if self._lan_no_update_since is None:
+                    self._lan_no_update_since = now
+                elif (now - self._lan_no_update_since) >= LAN_NO_UPDATE_GRACE:
+                    self._log_meter_state(
+                        "LAN ohne neue Messwerte",
+                        f"letzte Messzeit {result.measurement_time}",
+                    )
             if self._lan_unreachable_notified:
                 pn_dismiss(self.hass, _NOTIFY_BOX_UNREACHABLE)
                 self._lan_unreachable_notified = False
@@ -692,7 +780,7 @@ class IonaDataManager:
             self._lan_token_renewing = False
 
     async def _task_web_data(self) -> None:
-        """Cloud-Abruf als Fallback. Zwei unabhängige Auslöser:
+        """Cloud-Abruf als Fallback. Drei unabhängige Auslöser:
 
         1. **LAN ist stumm** – seit `_max_lan_silence` kein erfolgreicher
            Abruf. Dann übernimmt die Cloud alle Werte.
@@ -700,9 +788,13 @@ class IonaDataManager:
            sich seit `MAX_METER_MEASUREMENT_AGE` nicht verändert. Dann gleicht
            die Cloud nur den Zählerstand ab; die Momentanleistung bleibt beim
            sekundengenauen LAN-Wert (`lan_alive`).
+        3. **LAN antwortet, liefert aber keine Leistung** – seit
+           `MAX_POWER_MISSING_AGE` kam kein Leistungswert von der Box. Dann
+           liefert die Cloud nur die Momentanleistung; Zählerstände und
+           `source` bleiben bei der Box (`lan_has_power`).
 
-        Erreichbarkeit und Datenqualität sind zwei verschiedene Fragen und
-        brauchen deshalb zwei Schwellen.
+        Erreichbarkeit und Datenqualität sind verschiedene Fragen und
+        brauchen deshalb getrennte Schwellen.
         """
         if not await self.hass.async_add_executor_job(env_file_exists, WEB_TOKEN_ENV):
             return
@@ -710,8 +802,9 @@ class IonaDataManager:
         lan_silent = self._lan_is_silent()
         age = await self.hass.async_add_executor_job(self._meter_measurement_age)
         meter_stale = age is None or age >= MAX_METER_MEASUREMENT_AGE
+        power_missing = not lan_silent and self._lan_power_missing()
 
-        if not lan_silent and not meter_stale:
+        if not lan_silent and not meter_stale and not power_missing:
             return
 
         # Mindestabstand unabhängig vom eingestellten interval_web.
@@ -726,10 +819,15 @@ class IonaDataManager:
         if lan_silent:
             grund = "LAN stumm"
         else:
-            grund = (
-                "Zählerstand steht seit "
-                + ("unbekannt lange" if age is None else f"{int(age)} s")
-            )
+            gruende = []
+            if meter_stale:
+                gruende.append(
+                    "Zählerstand steht seit "
+                    + ("unbekannt lange" if age is None else f"{int(age)} s")
+                )
+            if power_missing:
+                gruende.append("Box liefert keine Momentanleistung")
+            grund = ", ".join(gruende)
 
         _LOGGER.info("Starte: get_web_data (Fallback – %s)", grund)
         from .app.get_web_data import run as _run
@@ -737,14 +835,23 @@ class IonaDataManager:
 
         def _locked_run():
             with lock:
-                return _run(lan_alive=not lan_silent)
+                return _run(lan_alive=not lan_silent,
+                            lan_has_power=not power_missing)
 
         result = await self.hass.async_add_executor_job(_locked_run)
         if not result:
             self._log_meter_state("WEB fehlgeschlagen", result.error or "")
-        elif result.updated and lan_silent:
-            self._log_meter_state("WEB aktuell")
-        elif result.updated:
+        elif lan_silent:
+            if result.updated:
+                self._log_meter_state("WEB aktuell")
+            else:
+                # Cloud antwortet, hat aber selbst keinen neueren Messwert –
+                # dann kann der Fallback nicht helfen.
+                self._log_meter_state(
+                    "WEB ohne neue Messwerte",
+                    f"letzte Messzeit {result.measurement_time}",
+                )
+        elif "Gesamtverbrauch" in result.written:
             # Erst jetzt steht fest, dass der Zählerstand der Box wirklich
             # falsch war: Die Cloud hatte einen höheren Wert und hat ihn
             # geschrieben. Das bloße Alter reicht als Begründung nicht – bei
@@ -754,13 +861,18 @@ class IonaDataManager:
             # und wird verworfen, hier kommt niemand vorbei.
             self._log_meter_state("LAN mit veralteten Zählerständen")
             self._notify_meter_stale(True)
-        else:
-            # Cloud antwortet, hat aber selbst keinen neueren Messwert –
-            # dann kann der Fallback nicht helfen.
+        elif "Momentanleistung" in result.written:
+            # Nur die fehlende Leistung ergänzt. Kein Zustandswechsel: den
+            # führt der LAN-Task ("LAN ohne Momentanleistung"), und keine
+            # Zählerstand-Meldung – der Zählerstand kam ja von der Box.
+            _LOGGER.debug("Web-Daten: Momentanleistung ergänzt (Box liefert keine)")
+        elif meter_stale:
             self._log_meter_state(
                 "WEB ohne neue Messwerte",
                 f"letzte Messzeit {result.measurement_time}",
             )
+        else:
+            _LOGGER.debug("Web-Daten: keine Momentanleistung von der Cloud")
         _LOGGER.info(
             "Fertig: get_web_data → %s (geschrieben: %s)",
             "OK" if result else "FEHLER", result.updated,

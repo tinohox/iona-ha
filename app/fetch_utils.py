@@ -76,6 +76,18 @@ class FetchResult:
     # dahinter – und der Rückgang-Schutz würde den Wert sonst für immer
     # einfrieren, ohne dass es jemand bemerkt.
     rejected_decrease: bool = False
+    # True, wenn die Box geantwortet hat, aber keinen Leistungswert lieferte
+    # (`power.now.value` fehlt oder ist 0). Gemessen an einer realen Box:
+    # sie meldet 0 W, während ihr Importregister mit ~200 W weiterläuft –
+    # die 0 ist dort "kein Wert", keine Messung. Ohne dieses Signal kann die
+    # Cloud nie einspringen, denn sie darf die Momentanleistung nur
+    # schreiben, wenn sie über LAN wirklich nicht kommt.
+    power_missing: bool = False
+    # Welche Messwerte dieser Abruf tatsächlich geschrieben hat. `updated`
+    # allein reicht dem DataManager nicht: Schreibt die Cloud nur die
+    # Momentanleistung, darf daraus keine Meldung über einen stehenden
+    # Zählerstand werden.
+    written: tuple[str, ...] = ()
 
     def __bool__(self) -> bool:
         return self.success

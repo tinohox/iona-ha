@@ -49,6 +49,21 @@ MAX_METER_MEASUREMENT_AGE = 600
 MAX_LAN_SILENCE_MIN = 60
 LAN_SILENCE_FACTOR = 6
 
+# So lange muss die Box ohne Leistungswert antworten (power.now.value fehlt
+# oder ist 0), bevor die Cloud die Momentanleistung übernimmt. Nicht sofort:
+# Bei PV-Anlagen kann die Nettoleistung für einen Moment tatsächlich 0 sein,
+# und ein minutenalter Cloud-Wert soll keinen Live-Wert verdrängen. Im
+# Speicher gemessen, nicht über Momentanleistung_timestamp – der steht bei
+# konstanter Last genauso.
+MAX_POWER_MISSING_AGE = 300
+
+# So lange darf die Box ohne neue Messwerte antworten, bevor der Zustand
+# "LAN ohne neue Messwerte" geloggt wird. Bei konstanter Last liefert die Box
+# minutenlang denselben Leistungswert, und bei kleiner Last tickt der
+# Zählerstand nur alle paar Minuten – ohne Karenz wechselte das Log bei
+# jedem Abruf zwischen "LAN aktuell" und "LAN ohne neue Messwerte".
+LAN_NO_UPDATE_GRACE = 300
+
 # Mindestabstand zwischen zwei Cloud-Abrufen, unabhängig von interval_web
 # (der Options-Flow lässt dort 10 s zu). Der Web-Token wird mit den
 # Vision-Abrufen geteilt – ein Rate-Limit träfe sonst auch die Preisdaten.

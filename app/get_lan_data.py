@@ -97,7 +97,13 @@ def _fetch_data(url: str, access_token: str) -> tuple[dict | None, str | None]:
 
 
 def _parse_power(raw_value: int | None) -> int | None:
-    """Momentanleistung korrigieren (Überlauf-Werte)."""
+    """Momentanleistung korrigieren (Überlauf-Werte).
+
+    0 bedeutet "kein Wert", nicht "0 W": Eine reale Box meldete dauerhaft 0,
+    während ihr Importregister mit ~200 W weiterlief (Issue #2). Der Wert
+    wird verworfen und über `FetchResult.power_missing` gemeldet, damit der
+    DataManager die Cloud einspringen lassen kann.
+    """
     if raw_value is None or raw_value == 0:
         return None
     if raw_value > 9_000_000:
@@ -226,6 +232,7 @@ def run() -> FetchResult:
 
     updated = False
     rejected: list[str] = []
+    written: list[str] = []
 
     with TinyDB(DB_PATH, storage=AtomicJSONStorage) as db:
         result = db.search(Device.device_id == "Stromzaehler")
@@ -238,6 +245,7 @@ def run() -> FetchResult:
                 entry["Gesamtverbrauch"] = gesamtverbrauch
                 entry["Gesamtverbrauch_timestamp"] = gesamtverbrauch_ts
                 updated = True
+                written.append("Gesamtverbrauch")
 
             if gesamteinspeisung is not None and _accept(
                 "Gesamteinspeisung", entry, gesamteinspeisung, gesamteinspeisung_ts, rejected
@@ -245,6 +253,7 @@ def run() -> FetchResult:
                 entry["Gesamteinspeisung"] = gesamteinspeisung
                 entry["Gesamteinspeisung_timestamp"] = gesamteinspeisung_ts
                 updated = True
+                written.append("Gesamteinspeisung")
 
             if momentanleistung is not None and _accept(
                 "Momentanleistung", entry, momentanleistung, momentanleistung_ts, rejected
@@ -252,6 +261,7 @@ def run() -> FetchResult:
                 entry["Momentanleistung"] = momentanleistung
                 entry["Momentanleistung_timestamp"] = momentanleistung_ts
                 updated = True
+                written.append("Momentanleistung")
 
             if updated:
                 entry["source"] = SOURCE
@@ -279,6 +289,8 @@ def run() -> FetchResult:
                 )
             db.insert(insert_data)
             updated = True
+            written = [k for k in ("Gesamtverbrauch", "Gesamteinspeisung",
+                                   "Momentanleistung") if k in insert_data]
             _LOGGER.info("LAN-Daten: Neuer Zähler-Eintrag erstellt")
 
     return FetchResult(
@@ -287,6 +299,8 @@ def run() -> FetchResult:
         source=SOURCE,
         measurement_time=measurement_time,
         rejected_decrease=bool(rejected),
+        power_missing=momentanleistung is None,
+        written=tuple(written),
     )
 
 

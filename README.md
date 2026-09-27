@@ -137,6 +137,7 @@ Die Integration fragt die iONA Box **primär lokal über das LAN** ab – das is
 
 1. **Die Box ist nicht erreichbar** (ausgeschaltet, Netzwerkproblem, falsche IP-Adresse).
 2. **Die Box antwortet, liefert aber veraltete Messwerte.** Maßgeblich ist der Zeitstempel der Messwerte selbst – nicht die Frage, ob die Box überhaupt antwortet. Sind die Zählerwerte älter als 10 Minuten, wird zusätzlich die Web-API befragt.
+3. **Die Box antwortet, liefert aber keine Momentanleistung.** Manche Zähler geben die Leistung nicht an die Box weiter (die Box meldet dann dauerhaft 0 W, während der Zählerstand weiterläuft). Nach 5 Minuten ohne Leistungswert holt die Integration nur die Momentanleistung aus der Cloud; Zählerstände und Datenquelle bleiben bei der Box. Eine Benachrichtigung weist darauf hin.
 
 Sobald die LAN-Verbindung wieder aktuelle Werte liefert, wechselt die Datenquelle automatisch zurück auf **LAN**. Der Sensor zeigt also jederzeit transparent, woher die aktuellen Werte kommen.
 
@@ -394,6 +395,7 @@ Einstellungen → System → Protokolle → nach `iona` filtern. Diese Meldungen
 | `… → WEB ohne neue Messwerte` | Auch die Cloud hat keinen neueren Wert – die Box lädt zu selten hoch |
 | `… → WEB fehlgeschlagen` | Die enviaM-API antwortet nicht oder der Token ist ungültig |
 | `… → LAN mit veralteten Zählerständen` | Die Box antwortet, ihr Zählerstand steht aber still – die Integration gleicht ihn aus der Cloud ab |
+| `… → LAN ohne Momentanleistung` | Die Box antwortet und liefert Zählerstände, aber seit über 5 Minuten keinen Leistungswert – die Momentanleistung kommt so lange aus der Cloud (5-Minuten-Takt), die Datenquelle bleibt LAN |
 
 Diese Meldungen erscheinen nur beim **Wechsel** des Zustands, nicht bei jedem Abruf – der normale 5-Sekunden-Betrieb bleibt still.
 

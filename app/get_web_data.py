@@ -89,7 +89,7 @@ def _accept(key: str, entry: dict, new_value, new_ts) -> bool:
     return True
 
 
-def run(lan_alive: bool = False) -> FetchResult:
+def run(lan_alive: bool = False, lan_has_power: bool = True) -> FetchResult:
     """Web-Verbrauchsdaten abrufen und in DB schreiben.
 
     `lan_alive` = die lokale Box antwortet gerade. Dann bleibt die
@@ -98,6 +98,13 @@ def run(lan_alive: bool = False) -> FetchResult:
     Web-Abruf – etwa ausgelöst durch einen stehenden Zählerstand – den
     Live-Leistungswert durch einen alten ersetzen und nebenbei die
     Datenquelle auf WEB umstellen.
+
+    `lan_has_power` = die Box liefert auch tatsächlich einen Leistungswert.
+    Eine Box, die antwortet, aber dauerhaft `power = 0` meldet, ließe die
+    Momentanleistung sonst für immer leer – LAN schreibt nichts, und die
+    Cloud dürfte nicht. Nur in diesem Fall darf die Cloud die Leistung
+    schreiben, obwohl LAN lebt; `source` bleibt dabei LAN, weil die
+    Zählerstände weiterhin von der Box kommen.
     """
     web_env = _read_env("WebToken.env")
     access_token = web_env.get("ACCESS_TOKEN")
@@ -148,6 +155,7 @@ def run(lan_alive: bool = False) -> FetchResult:
 
     updated = False
     took_over = False
+    written: list[str] = []
 
     with TinyDB(DB_PATH, storage=AtomicJSONStorage) as db:
         result = db.search(Device.device_id == "Stromzaehler")
@@ -158,14 +166,18 @@ def run(lan_alive: bool = False) -> FetchResult:
                 entry["Gesamtverbrauch"] = gesamtverbrauch
                 entry["Gesamtverbrauch_timestamp"] = gesamtverbrauch_ts
                 updated = True
+                written.append("Gesamtverbrauch")
 
-            if not lan_alive and _accept(
+            if not (lan_alive and lan_has_power) and _accept(
                 "Momentanleistung", entry, momentanleistung, momentanleistung_ts
             ):
                 entry["Momentanleistung"] = momentanleistung
                 entry["Momentanleistung_timestamp"] = momentanleistung_ts
                 updated = True
-                took_over = True
+                written.append("Momentanleistung")
+                # Springt die Cloud nur für die fehlende Leistung ein, führt
+                # weiterhin die Box – sie liefert die Zählerstände.
+                took_over = not lan_alive
 
             if updated:
                 # source wechselt nur, wenn WEB die Führung übernimmt. Eine
@@ -190,10 +202,12 @@ def run(lan_alive: bool = False) -> FetchResult:
             })
             updated = True
             took_over = True
+            written = ["Gesamtverbrauch", "Momentanleistung"]
             _LOGGER.info("Web-Daten: Neuer Eintrag erstellt")
 
     return FetchResult(
-        True, updated=updated, source=SOURCE, measurement_time=measurement_time
+        True, updated=updated, source=SOURCE, measurement_time=measurement_time,
+        written=tuple(written),
     )
 
 
