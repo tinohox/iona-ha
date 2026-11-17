@@ -31,6 +31,7 @@ from .const import (
     INTERVAL_LAN_DATA,
     INTERVAL_WEB_DATA,
 )
+from .data_manager import describe_meter_standoff
 from .env_utils import (
     read_env_file,
     write_env_file,
@@ -133,7 +134,53 @@ class IonaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class IonaOptionsFlowHandler(config_entries.OptionsFlow):
     """Options Flow für iona-ha (Rekonfiguration)."""
 
+    def _manager(self):
+        return self.hass.data.get(DOMAIN, {}).get("manager")
+
     async def async_step_init(self, user_input=None):
+        """Einstieg: Formular, bei blockiertem Zählerstand vorher ein Menü.
+
+        Ohne Fehler sieht der Dialog aus wie vor 2.3.5. Die Übernahme
+        erscheint nur, solange die Meldung "Zählerstand blockiert" aktiv ist.
+        """
+        manager = self._manager()
+        if manager is not None and manager.meter_standoff():
+            return self.async_show_menu(
+                step_id="init", menu_options=["settings", "accept_meter"]
+            )
+        return await self.async_step_settings(user_input)
+
+    async def async_step_accept_meter(self, user_input=None):
+        """Gesunkene Zählerstände nach Bestätigung übernehmen.
+
+        Endet mit einem Abort statt `async_create_entry`: Es werden keine
+        Optionen gespeichert, die Integration lädt also nicht neu.
+        """
+        manager = self._manager()
+        rejected = manager.meter_standoff() if manager is not None else {}
+        if not rejected:
+            return self.async_abort(reason="meter_nothing_to_accept")
+
+        if user_input is None:
+            return self.async_show_form(
+                step_id="accept_meter",
+                data_schema=vol.Schema({}),
+                description_placeholders={
+                    "details": describe_meter_standoff(rejected)
+                },
+            )
+
+        accepted = await manager.async_accept_meter_decrease()
+        if accepted is None:
+            return self.async_abort(reason="meter_accept_failed")
+        if not accepted:
+            return self.async_abort(reason="meter_nothing_to_accept")
+        return self.async_abort(
+            reason="meter_accepted",
+            description_placeholders={"keys": ", ".join(accepted)},
+        )
+
+    async def async_step_settings(self, user_input=None):
         """Options-Formular anzeigen."""
         if user_input is not None:
             # account.env: bestehende Werte beibehalten, vision_tariff aktualisieren
@@ -212,4 +259,4 @@ class IonaOptionsFlowHandler(config_entries.OptionsFlow):
                 ),
             }
         )
-        return self.async_show_form(step_id="init", data_schema=data_schema)
+        return self.async_show_form(step_id="settings", data_schema=data_schema)

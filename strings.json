@@ -28,6 +28,14 @@
     "step": {
       "init": {
         "title": "iona-ha Optionen",
+        "description": "Die iONA Box meldet einen niedrigeren Zählerstand als den gespeicherten.",
+        "menu_options": {
+          "settings": "Einstellungen",
+          "accept_meter": "Zählerstand übernehmen"
+        }
+      },
+      "settings": {
+        "title": "iona-ha Optionen",
         "description": "Passe deine iONA-Zugangsdaten und Einstellungen an.",
         "data": {
           "IONA_BOX": "iONA Box IP-Adresse",
@@ -47,7 +55,16 @@
           "interval_lan": "Wie oft die iONA Box lokal abgefragt wird (in Sekunden, Standard: 5)",
           "interval_web": "Wie oft Web-Daten als Fallback abgerufen werden (in Sekunden, Standard: 300)"
         }
+      },
+      "accept_meter": {
+        "title": "Zählerstand übernehmen",
+        "description": "Die Box meldet niedrigere Zählerstände als gespeichert:\n\n{details}\n\nÜbernimm die Werte nur, wenn sie mit deinem Zähler übereinstimmen, zum Beispiel nach einem Zählertausch. Übernommen werden die Werte, die die Box beim Absenden liefert. Die Langzeitstatistik lässt sich danach unter Entwicklerwerkzeuge → Statistiken korrigieren."
       }
+    },
+    "abort": {
+      "meter_accepted": "Zählerstand übernommen: {keys}.",
+      "meter_nothing_to_accept": "Es gibt keinen blockierten Zählerstand (mehr).",
+      "meter_accept_failed": "Die iONA Box hat nicht geantwortet. Es wurde nichts übernommen; versuche es später erneut."
     }
   }
 }

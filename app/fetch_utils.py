@@ -22,7 +22,7 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from tinydb.storages import Storage
@@ -76,6 +76,9 @@ class FetchResult:
     # dahinter – und der Rückgang-Schutz würde den Wert sonst für immer
     # einfrieren, ohne dass es jemand bemerkt.
     rejected_decrease: bool = False
+    # Die abgelehnten Rückgänge im Einzelnen, `key → (gespeichert, Box)`.
+    # Der Options-Flow zeigt sie vor einer manuellen Übernahme an.
+    rejected_values: dict = field(default_factory=dict)
     # True, wenn die Box geantwortet hat, aber keinen Leistungswert lieferte
     # (`power.now.value` fehlt oder ist 0). Gemessen an einer realen Box:
     # sie meldet 0 W, während ihr Importregister mit ~200 W weiterläuft –

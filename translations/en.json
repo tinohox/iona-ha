@@ -28,6 +28,14 @@
     "step": {
       "init": {
         "title": "iona-ha Options",
+        "description": "The iONA Box reports a lower meter reading than the stored one.",
+        "menu_options": {
+          "settings": "Settings",
+          "accept_meter": "Accept meter reading"
+        }
+      },
+      "settings": {
+        "title": "iona-ha Options",
         "description": "Adjust your iONA credentials and settings.",
         "data": {
           "IONA_BOX": "iONA Box IP Address",
@@ -47,7 +55,16 @@
           "interval_lan": "How often the iONA Box is polled locally (in seconds, default: 5)",
           "interval_web": "How often web data is fetched as fallback (in seconds, default: 300)"
         }
+      },
+      "accept_meter": {
+        "title": "Accept meter reading",
+        "description": "The box reports lower meter readings than stored:\n\n{details}\n\nOnly accept them if they match your meter, e.g. after a meter replacement. The values the box delivers when you submit are taken over. Long-term statistics can be corrected afterwards under Developer tools → Statistics."
       }
+    },
+    "abort": {
+      "meter_accepted": "Meter reading accepted: {keys}.",
+      "meter_nothing_to_accept": "There is no blocked meter reading (anymore).",
+      "meter_accept_failed": "The iONA Box did not respond. Nothing was accepted; please try again later."
     }
   }
 }

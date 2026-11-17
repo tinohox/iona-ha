@@ -837,6 +837,140 @@ def test_datamanager_power_missing():
             sys.modules.pop(name, None)
 
 
+def test_accept_decrease():
+    section("I · Zählerstand übernehmen (manuell bestätigter Rückgang)")
+    import get_lan_data
+    EP = EPOCH + 10_000
+
+    # Zählertausch: Bezug UND Einspeisung fallen gemeinsam
+    setup_modules()
+    BOX["payload"] = box_payload(EP, 800, 15_418_500, 9_615_558)
+    get_lan_data.run()
+    BOX["payload"] = box_payload(EP + 60, 800, 800, 300)
+    r = get_lan_data.run()
+    check("Tausch: ohne Bestätigung abgelehnt", r.rejected_decrease, True)
+    check("Tausch: beide Register gemeldet",
+          r.rejected_values,
+          {"Gesamtverbrauch": (15418.5, 0.8), "Gesamteinspeisung": (9615.558, 0.3)})
+    check("Tausch: Werte unverändert",
+          (entry()["Gesamtverbrauch"], entry()["Gesamteinspeisung"]), (15418.5, 9615.558))
+    BOX["payload"] = box_payload(EP + 120, 800, 800, 300)
+    r = get_lan_data.run(accept_decrease=True)
+    check("Tausch: beide übernommen",
+          (entry()["Gesamtverbrauch"], entry()["Gesamteinspeisung"]), (0.8, 0.3))
+    check("Tausch: kein Rückgang mehr gemeldet", r.rejected_decrease, False)
+    check("Tausch: geschrieben",
+          set(r.written) >= {"Gesamtverbrauch", "Gesamteinspeisung"}, True)
+    BOX["payload"] = box_payload(EP + 180, 800, 900, 310)
+    r = get_lan_data.run()
+    check("Tausch: danach normaler Betrieb", entry()["Gesamtverbrauch"], 0.9)
+
+    # Marcus' Fall: Bezug läuft weiter, nur die Einspeisung ist gesunken
+    setup_modules()
+    BOX["payload"] = box_payload(EP, 800, 17_270_000, 9_615_558)
+    get_lan_data.run()
+    BOX["payload"] = box_payload(EP + 60, 800, 17_274_000, 9_454_200)
+    r = get_lan_data.run()
+    check("nur Einspeisung abgelehnt", list(r.rejected_values), ["Gesamteinspeisung"])
+    check("Bezug läuft normal weiter", entry()["Gesamtverbrauch"], 17274.0)
+    BOX["payload"] = box_payload(EP + 120, 800, 17_275_000, 9_454_200)
+    r = get_lan_data.run(accept_decrease=True)
+    check("Einspeisung übernommen", entry()["Gesamteinspeisung"], 9454.2)
+    check("Bezug normal geschrieben", entry()["Gesamtverbrauch"], 17275.0)
+
+    # Ohne Rückgang ändert das Flag nichts
+    BOX["payload"] = box_payload(EP + 180, 800, 17_276_000, 9_454_300)
+    r = get_lan_data.run(accept_decrease=True)
+    check("ohne Rückgang: normal geschrieben",
+          (entry()["Gesamtverbrauch"], entry()["Gesamteinspeisung"]), (17276.0, 9454.3))
+
+    # Auch mit Flag: ein älterer Zeitstempel bleibt verworfen
+    BOX["payload"] = box_payload(EP - 3600, 800, 17_000_000, 9_000_000)
+    r = get_lan_data.run(accept_decrease=True)
+    check("älterer Zeitstempel: nichts übernommen",
+          (entry()["Gesamtverbrauch"], entry()["Gesamteinspeisung"]), (17276.0, 9454.3))
+
+
+def test_datamanager_accept_meter():
+    section("I · DataManager: Übernahme nur bei aktiver Meldung")
+    _stub_homeassistant()
+    import asyncio, time as _t
+    pkg = types.ModuleType("iona")
+    pkg.__path__ = [REPO]
+    sys.modules["iona"] = pkg
+    import iona.data_manager as dm
+    from fetch_utils import FetchResult
+
+    notes = {"created": [], "dismissed": [], "text": []}
+
+    def _create(hass, msg, title="", notification_id=""):
+        notes["created"].append(notification_id)
+        notes["text"].append(msg)
+    dm.pn_create = _create
+    dm.pn_dismiss = lambda hass, nid: notes["dismissed"].append(nid)
+    dm.env_file_exists = lambda p: True
+
+    calls = {"kwargs": [], "result": None}
+    lan_mod = types.ModuleType("iona.app.get_lan_data")
+
+    def _lan_run(**kw):
+        calls["kwargs"].append(kw)
+        return calls["result"]
+    lan_mod.run = _lan_run
+    sys.modules["iona.app.get_lan_data"] = lan_mod
+
+    marcus = {"Gesamteinspeisung": (9615.558, 9454.2)}
+    tausch = {"Gesamtverbrauch": (15418.5, 0.8), "Gesamteinspeisung": (9615.558, 0.3)}
+    run = asyncio.run
+    try:
+        text = dm.describe_meter_standoff(marcus)
+        check("Text: Werte deutsch formatiert",
+              "9.615,558 kWh" in text and "9.454,200 kWh" in text, True)
+        check("Text: kleiner Rückgang → negative Buchung", "−161,358 kWh" in text, True)
+        check("Text: Tausch → neuer Zyklus",
+              dm.describe_meter_standoff(tausch).count("neuen Zählerzyklus"), 2)
+
+        mgr = _manager(dm)
+        calls["result"] = FetchResult(True, updated=False, source="LAN",
+                                      rejected_decrease=True, rejected_values=tausch)
+        run(mgr._task_lan_data())
+        check("frische Ablehnung: keine Option", mgr.meter_standoff(), {})
+        check("frische Ablehnung: Übernahme verweigert",
+              run(mgr.async_accept_meter_decrease()), [])
+        check("frische Ablehnung: Box nicht mit Flag gefragt",
+              [k for k in calls["kwargs"] if k], [])
+
+        mgr._decrease_rejected_since -= dm._METER_STANDOFF_SECONDS + 1
+        run(mgr._task_lan_data())
+        check("nach 6 h: Meldung", notes["created"], [dm._NOTIFY_METER_STANDOFF])
+        check("Meldung nennt beide Register",
+              "Bezug" in notes["text"][0] and "Einspeisung" in notes["text"][0], True)
+        check("Meldung verweist auf Konfigurieren",
+              "Zählerstand übernehmen" in notes["text"][0], True)
+        check("nach 6 h: Option sichtbar", mgr.meter_standoff(), tausch)
+
+        calls["kwargs"].clear()
+        calls["result"] = None
+        check("Box antwortet nicht → None",
+              run(mgr.async_accept_meter_decrease()), None)
+        check("Box antwortet nicht: Meldung bleibt", mgr.meter_standoff(), tausch)
+
+        calls["kwargs"].clear()
+        calls["result"] = FetchResult(
+            True, updated=True, source="LAN",
+            written=("Gesamtverbrauch", "Gesamteinspeisung", "Momentanleistung"))
+        check("Übernahme liefert beide Register",
+              run(mgr.async_accept_meter_decrease()),
+              ["Gesamtverbrauch", "Gesamteinspeisung"])
+        check("Box mit accept_decrease gefragt",
+              calls["kwargs"], [{"accept_decrease": True}])
+        check("Meldung geschlossen",
+              notes["dismissed"], [dm._NOTIFY_METER_STANDOFF])
+        check("Option verschwunden", mgr.meter_standoff(), {})
+    finally:
+        sys.modules.pop("iona.app.get_lan_data", None)
+
+
 def main():
     test_value_guard()
     test_no_key_ever_removed()
@@ -856,6 +990,8 @@ def main():
     test_box_without_power()
     test_web_written_reports_fields()
     test_datamanager_power_missing()
+    test_accept_decrease()
+    test_datamanager_accept_meter()
 
     print()
     if _FAILS:

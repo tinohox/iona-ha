@@ -111,7 +111,10 @@ def _parse_power(raw_value: int | None) -> int | None:
     return raw_value
 
 
-def _accept(key: str, entry: dict, new_value, new_ts, rejected: list) -> bool:
+def _accept(
+    key: str, entry: dict, new_value, new_ts, rejected: dict,
+    accept_decrease: bool = False,
+) -> bool:
     """Prüft, ob ein Messwert den gespeicherten ersetzen darf.
 
     Drei Bedingungen, in dieser Reihenfolge:
@@ -125,13 +128,21 @@ def _accept(key: str, entry: dict, new_value, new_ts, rejected: list) -> bool:
        Zeitstempel stehen; er bedeutet damit "seit wann steht dieser Wert".
     2. Der Zeitstempel muss den Wert als neuer ausweisen (oder unvergleichbar
        sein).
-    3. Zählerstände dürfen nicht sinken.
+    3. Zählerstände dürfen nicht sinken – außer `accept_decrease` ist
+       gesetzt. Das geschieht nur, wenn der Nutzer die Übernahme im
+       Options-Flow bestätigt hat (Zählertausch).
     """
     if entry.get(key) == new_value:
         return False
     if not ts_allows_update(new_ts, entry.get(f"{key}_timestamp")):
         return False
     if not value_allows_update(key, new_value, entry.get(key)):
+        if accept_decrease:
+            _LOGGER.warning(
+                "LAN-Daten: %s von %s auf %s übernommen (manuell bestätigt)",
+                key, entry.get(key), new_value,
+            )
+            return True
         # Bewusst debug: Sobald die Cloud einmal einen höheren Zählerstand
         # geschrieben hat, wird der niedrigere LAN-Wert im 5-Sekunden-Takt
         # abgelehnt. Als warning wären das rund 17 000 Meldungen pro Tag,
@@ -142,13 +153,16 @@ def _accept(key: str, entry: dict, new_value, new_ts, rejected: list) -> bool:
             "(Zählerstände dürfen nicht zurückgehen)",
             key, entry.get(key), new_value,
         )
-        rejected.append(key)
+        rejected[key] = (entry.get(key), new_value)
         return False
     return True
 
 
-def run() -> FetchResult:
-    """Hauptfunktion: Daten von der iONA Box lesen und in DB schreiben."""
+def run(accept_decrease: bool = False) -> FetchResult:
+    """Hauptfunktion: Daten von der iONA Box lesen und in DB schreiben.
+
+    `accept_decrease=True` übernimmt gesunkene Zählerstände (siehe `_accept`).
+    """
     # Zugangsdaten laden
     secrets = _read_env("secrets-n2g.env")
     iona_box = secrets.get("IONA_BOX")
@@ -231,7 +245,7 @@ def run() -> FetchResult:
     quarantine_corrupt_db(DB_PATH)
 
     updated = False
-    rejected: list[str] = []
+    rejected: dict = {}
     written: list[str] = []
 
     with TinyDB(DB_PATH, storage=AtomicJSONStorage) as db:
@@ -240,7 +254,8 @@ def run() -> FetchResult:
             entry = result[0]
 
             if gesamtverbrauch is not None and _accept(
-                "Gesamtverbrauch", entry, gesamtverbrauch, gesamtverbrauch_ts, rejected
+                "Gesamtverbrauch", entry, gesamtverbrauch, gesamtverbrauch_ts, rejected,
+                accept_decrease,
             ):
                 entry["Gesamtverbrauch"] = gesamtverbrauch
                 entry["Gesamtverbrauch_timestamp"] = gesamtverbrauch_ts
@@ -248,7 +263,8 @@ def run() -> FetchResult:
                 written.append("Gesamtverbrauch")
 
             if gesamteinspeisung is not None and _accept(
-                "Gesamteinspeisung", entry, gesamteinspeisung, gesamteinspeisung_ts, rejected
+                "Gesamteinspeisung", entry, gesamteinspeisung, gesamteinspeisung_ts, rejected,
+                accept_decrease,
             ):
                 entry["Gesamteinspeisung"] = gesamteinspeisung
                 entry["Gesamteinspeisung_timestamp"] = gesamteinspeisung_ts
@@ -256,7 +272,8 @@ def run() -> FetchResult:
                 written.append("Gesamteinspeisung")
 
             if momentanleistung is not None and _accept(
-                "Momentanleistung", entry, momentanleistung, momentanleistung_ts, rejected
+                "Momentanleistung", entry, momentanleistung, momentanleistung_ts, rejected,
+                accept_decrease,
             ):
                 entry["Momentanleistung"] = momentanleistung
                 entry["Momentanleistung_timestamp"] = momentanleistung_ts
@@ -299,6 +316,7 @@ def run() -> FetchResult:
         source=SOURCE,
         measurement_time=measurement_time,
         rejected_decrease=bool(rejected),
+        rejected_values=rejected,
         power_missing=momentanleistung is None,
         written=tuple(written),
     )

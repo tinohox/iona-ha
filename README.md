@@ -449,11 +449,11 @@ Der lokale Weg ist der schnelle: er liefert im Sekundentakt. Steht im Log dauerh
 <details>
 <summary><b>Benachrichtigung: Zählerstand blockiert</b></summary>
 
-- Die Box meldet einen **niedrigeren** Zählerstand als den gespeicherten. Die Integration übernimmt ihn nicht, weil Home Assistant einen Rückgang als Zählerreset wertet und den vollen Wert als Verbrauch verbuchen würde – ein Ausschlag, der sich nur von Hand korrigieren lässt
-- Nach einem **Zählertausch** ist das zu erwarten. Dann muss der gespeicherte Wert einmalig verworfen werden:
-  1. Home Assistant stoppen
-  2. `custom_components/iona/app/data/meter_db.json` löschen
-  3. Home Assistant starten
+- Die Box meldet seit mindestens 6 Stunden einen **niedrigeren** Zählerstand als den gespeicherten. Die Integration übernimmt ihn nicht von selbst, weil ein Rückgang die Langzeitstatistik verändert. Die Meldung nennt für jedes betroffene Register beide Werte und die Folge für die Statistik:
+  - Rückgang auf unter 90 % (typisch: neuer Zähler): Home Assistant beginnt einen neuen Zählerzyklus und zählt den neuen Wert ab null
+  - kleinerer Rückgang: Die Statistik bucht die Differenz einmalig negativ
+- Stimmt der Wert der Box mit deinem Zähler überein, zum Beispiel nach einem **Zählertausch**: **Einstellungen → Geräte & Dienste → iONA → Konfigurieren → Zählerstand übernehmen**. Übernommen werden alle blockierten Register gemeinsam – nach einem Tausch Bezug und Einspeisung, sonst nur das betroffene
+- Der Menüpunkt erscheint nur, solange die Meldung aktiv ist. Nach einem Neustart von Home Assistant dauert es wieder 6 Stunden, bis Meldung und Menüpunkt erscheinen
 - Die Langzeitstatistik lässt sich danach unter **Entwicklerwerkzeuge → Statistiken** korrigieren
 - Ein Registerüberlauf der Box wird automatisch erkannt und braucht keinen Eingriff
 

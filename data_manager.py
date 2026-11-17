@@ -56,6 +56,7 @@ from .app.fetch_utils import (
     ERR_CONFIG,
     ERR_HTTP,
     ERR_UNREACHABLE,
+    CUMULATIVE_KEYS,
     parse_ts,
 )
 
@@ -91,6 +92,55 @@ _LAN_TOKEN_RETRY_COOLDOWN = 300
 # Integration von einem Zählertausch ausgeht und den Nutzer informiert.
 # Kurze Ausreißer (ein einzelner Fehlwert der Box) sollen nicht melden.
 _METER_STANDOFF_SECONDS = 6 * 3600
+
+_METER_LABELS = {
+    "Gesamtverbrauch": "Bezug (Gesamtverbrauch)",
+    "Gesamteinspeisung": "Einspeisung (Gesamteinspeisung)",
+}
+
+
+def _kwh(value) -> str:
+    """Zählerstand deutsch formatiert: 9615.558 → "9.615,558 kWh"."""
+    try:
+        text = f"{float(value):,.3f}"
+    except (TypeError, ValueError):
+        return str(value)
+    return text.replace(",", "_").replace(".", ",").replace("_", ".") + " kWh"
+
+
+def describe_meter_standoff(rejected: dict) -> str:
+    """Abgelehnte Rückgänge als Markdown-Liste, samt Folge für die Statistik.
+
+    Die Folge hängt an der Schwelle des HA-Recorders (sensor/recorder.py,
+    `reset_detected`): Erst ein Rückgang auf unter 90 % gilt bei
+    `total_increasing` als neuer Zählerzyklus, dann wird der neue Wert ab
+    null gezählt – bei einem neuen Zähler richtig. Ein kleinerer Rückgang ist
+    kein Reset; die Statistik bucht die Differenz einmalig negativ.
+    """
+    lines = []
+    for key, (old, new) in rejected.items():
+        line = (
+            f"- **{_METER_LABELS.get(key, key)}:** gespeichert {_kwh(old)}, "
+            f"Box meldet {_kwh(new)}"
+        )
+        try:
+            old_f, new_f = float(old), float(new)
+        except (TypeError, ValueError):
+            lines.append(line)
+            continue
+        if new_f < 0.9 * old_f:
+            line += (
+                ". Home Assistant beginnt damit einen neuen Zählerzyklus und "
+                f"zählt die {_kwh(new_f)} ab null."
+            )
+        else:
+            line += (
+                ". Die Langzeitstatistik bucht dadurch einmalig "
+                f"−{_kwh(old_f - new_f)}."
+            )
+        lines.append(line)
+    return "\n".join(lines)
+
 
 _LAN_STATE_BY_REASON = {
     ERR_UNREACHABLE: "LAN nicht erreichbar",
@@ -210,6 +260,9 @@ class IonaDataManager:
         self._lan_token_renewing: bool = False
         self._decrease_rejected_since: float | None = None
         self._meter_standoff_notified: bool = False
+        # Zuletzt abgelehnte Rückgänge (`key → (gespeichert, Box)`), für den
+        # Text der Meldung und die Übernahme im Options-Flow.
+        self._rejected_values: dict = {}
         # Seit wann antwortet die Box ohne Leistungswert (monotone Uhr).
         # Erst nach MAX_POWER_MISSING_AGE darf die Cloud die Momentanleistung
         # übernehmen – ein einzelner echter 0-W-Moment (PV) löst nichts aus.
@@ -431,6 +484,41 @@ class IonaDataManager:
             self._power_missing_notified = True
         return True
 
+    def meter_standoff(self) -> dict:
+        """Blockierte Zählerstände, solange die Meldung dazu aktiv ist.
+
+        Der Options-Flow bietet die Übernahme nur in diesem Zustand an: Ein
+        einzelner Ausreißer der Box soll nie zur Übernahme einladen.
+        """
+        if not self._meter_standoff_notified:
+            return {}
+        return dict(self._rejected_values)
+
+    async def async_accept_meter_decrease(self) -> list[str] | None:
+        """Gesunkene Zählerstände der Box nach Bestätigung übernehmen.
+
+        Übernimmt jeden Zählerstand, der gerade abgelehnt wird – nach einem
+        Zählertausch Bezug und Einspeisung gemeinsam, sonst nur das betroffene
+        Register. Liefert die übernommenen Keys, [] ohne aktiven Fehler und
+        None, wenn die Box nicht antwortet.
+        """
+        if not self.meter_standoff():
+            _LOGGER.info("Zählerstand übernehmen: kein blockierter Zählerstand")
+            return []
+        from .app.get_lan_data import run as _run
+        lock = self._meter_db_lock
+
+        def _locked_run():
+            with lock:
+                return _run(accept_decrease=True)
+
+        result = await self.hass.async_add_executor_job(_locked_run)
+        if not result:
+            return None
+        self._rejected_values = result.rejected_values
+        self._check_meter_standoff(result.rejected_decrease)
+        return [key for key in result.written if key in CUMULATIVE_KEYS]
+
     def _check_meter_standoff(self, rejected: bool) -> None:
         """Meldet einen dauerhaft blockierten Zählerstand.
 
@@ -464,14 +552,13 @@ class IonaDataManager:
             (
                 "Die iONA Box meldet seit mehreren Stunden einen **niedrigeren "
                 "Zählerstand** als den gespeicherten. Die Integration übernimmt "
-                "ihn nicht, weil Home Assistant einen Rückgang als Zählerreset "
-                "wertet und den vollen Wert als Verbrauch verbuchen würde.\n\n"
-                "Der Zählerstand-Sensor steht deshalb still. Wurde dein Zähler "
-                "**getauscht**, ist das zu erwarten – dann muss der gespeicherte "
-                "Wert einmalig verworfen werden:\n\n"
-                "1. Home Assistant stoppen\n"
-                "2. `custom_components/iona/app/data/meter_db.json` löschen\n"
-                "3. Home Assistant starten\n\n"
+                "ihn nicht von selbst, weil ein Rückgang die Langzeitstatistik "
+                "von Home Assistant verändert:\n\n"
+                f"{describe_meter_standoff(self._rejected_values)}\n\n"
+                "Der Sensor steht deshalb still. Stimmt der Wert der Box mit "
+                "deinem Zähler überein (zum Beispiel nach einem **Zählertausch**), "
+                "übernimm ihn unter **Einstellungen → Geräte & Dienste → iONA → "
+                "Konfigurieren → Zählerstand übernehmen**.\n\n"
                 "Die Langzeitstatistik lässt sich danach unter "
                 "**Entwicklerwerkzeuge → Statistiken** korrigieren."
             ),
@@ -689,6 +776,7 @@ class IonaDataManager:
         if ok:
             now = time.monotonic()
             self._lan_last_success = now
+            self._rejected_values = result.rejected_values
             self._check_meter_standoff(result.rejected_decrease)
             power_missing = self._track_lan_power(result.power_missing)
             if result.updated:
